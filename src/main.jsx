@@ -3,12 +3,14 @@ import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { CarsPage, DashboardPage, PricingPage } from './pages'
 import { AdminPage } from './admin'
+import { faqItems, InfoPage, infoPaths, NotFoundPage } from './info-pages'
 import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
 import './styles.css'
 import './pages.css'
 import './motion.css'
 import './search.css'
+import './info-pages.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
@@ -21,7 +23,7 @@ function AnnouncementBar(){const [show,setShow]=useState(()=>sessionStorage.getI
 function Header({onLogin}){
   const [open,setOpen]=useState(false)
   return <header className="header"><div className="wrap nav"><Brand/><nav className={open?'open':''} onClick={()=>setOpen(false)}>
-    <a href="/cars">آگهی‌های خودرو</a><a href="/#method">چطور کار می‌کند؟</a><a href="/pricing">خرید اشتراک</a><a href="/dashboard">داشبورد من</a>
+    <a href="/cars">آگهی‌ها</a><a href="/what-is-khodroto">خودروتو چیست؟</a><a href="/methodology">روش تحلیل</a><a href="/pricing">اشتراک</a><a href="/dashboard">داشبورد من</a>
   </nav><div className="nav-actions"><button className="login" onClick={onLogin}>ورود</button><a className="primary small" href="/cars">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
 }
 
@@ -69,9 +71,9 @@ return <section id="method" className="method"><div className="wrap"><div classN
 
 function Score(){return <section id="score" className="score-section"><div className="wrap score-grid"><div><span className="kicker light">امتیاز خودروتو</span><h2>یک عدد ساده برای<br/>یک تصمیم مهم</h2><p>امتیاز از ترکیب فاصله قیمت با بازار، تعداد نمونه‌های مشابه، تازگی آگهی و کیفیت اطلاعات ساخته می‌شود.</p><div className="shield"><ShieldCheck/><span><b>تحلیل قابل توضیح</b><small>دلیل هر امتیاز را کنار همان خودرو می‌بینی.</small></span></div></div><div className="score-card"><div className="dial"><span>۹۱</span><small>از ۱۰۰</small></div><h3>فرصت عالی</h3><p>قیمت این خودرو با توجه به مدل، کارکرد و شهر، حدود ۱۲٪ پایین‌تر از بازار است.</p><div className="legend"><span><i className="l1"/>۸۵ تا ۱۰۰ <b>فرصت عالی</b></span><span><i className="l2"/>۷۰ تا ۸۴ <b>زیر قیمت</b></span><span><i className="l3"/>۵۰ تا ۶۹ <b>قیمت منصفانه</b></span></div></div></div></section>}
 
-function FAQ(){const qs=['اطلاعات خودروها از کجا می‌آید؟','امتیاز خودروتو چطور محاسبه می‌شود؟','آیا خودروتو فروشنده خودرو است؟']; const [open,setOpen]=useState(0); return <section id="faq" className="faq"><div className="wrap faq-grid"><div><span className="kicker">پرسش‌های پرتکرار</span><h2>چیزی مبهم مانده؟</h2><p>قبل از تماس یا معامله، اطلاعات آگهی و سلامت خودرو را مستقلاً بررسی کن.</p></div><div>{qs.map((q,i)=><article className={open===i?'open':''} key={q}><button onClick={()=>setOpen(open===i?-1:i)}><b>{q}</b><span>{open===i?<X/>:<span>＋</span>}</span></button>{open===i&&<p>{i===0?'در نسخه عملیاتی، داده‌های آگهی‌های عمومی دیوار از مسیر مجاز دریافت، پالایش و تحلیل می‌شوند. این پیش‌نمایش برای ارزیابی تجربه کاربری از داده نمونه استفاده می‌کند.':i===1?'فاصله قیمت با خودروهای هم‌مدل، سال ساخت، کارکرد، شهر، تازگی آگهی و میزان اطمینان داده در امتیاز مؤثر است.':'خیر. خودروتو فقط موتور جست‌وجو و تحلیل آگهی است و در خرید، فروش یا کارشناسی خودرو دخالتی ندارد.'}</p>}</article>)}</div></div></section>}
+function FAQ(){const [open,setOpen]=useState(0),items=faqItems.slice(0,6);return <section id="faq" className="faq"><div className="wrap faq-grid"><div><span className="kicker">پرسش‌های پرتکرار</span><h2>پاسخ روشن، قبل از تصمیم</h2><p>درباره منبع داده، امتیاز، آگهی مشکوک و مسئولیت معامله.</p><a className="text-link faq-more" href="/faq">مشاهده همه سوالات <ArrowLeft/></a></div><div>{items.map((item,i)=><article className={open===i?'open':''} key={item.q}><button onClick={()=>setOpen(open===i?-1:i)}><b>{item.q}</b><span>{open===i?<X/>:<span>＋</span>}</span></button>{open===i&&<p>{item.a}</p>}</article>)}</div></div></section>}
 
-function Footer({onNotify}){return <footer><div className="wrap footer-top"><div><Brand/><p>ماشین خوب، قیمت درست.</p></div><div><b>خودروتو</b><a href="#method">درباره ما</a><a href="#faq">پرسش‌ها</a></div><div><b>سرویس</b><a href="#opportunities">فرصت‌ها</a><a href="#score">راهنمای امتیاز</a></div><div className="notify"><b>فرصت خوب را از دست نده</b><p>اعلان هوشمند خودروهای منتخب</p><button onClick={onNotify}><Bell/> خبرم کن</button></div></div><div className="wrap copyright"><span>© ۱۴۰۵ خودروتو — همه حقوق محفوظ است.</span><span>ساخته‌شده برای خرید آگاهانه</span></div></footer>}
+function Footer({onNotify}){return <footer><div className="wrap footer-top"><div><Brand/><p>موتور مستقل جست‌وجو و تحلیل بازار خودرو.</p></div><div><b>خودروتو</b><a href="/what-is-khodroto">خودروتو چیست؟</a><a href="/about">درباره ما</a><a href="/methodology">روش تحلیل</a><a href="/data-sources">منابع داده</a></div><div><b>راهنما و ارتباط</b><a href="/faq">سوالات متداول</a><a href="/contact">تماس با ما</a><a href="/privacy">حریم خصوصی</a><a href="/terms">قوانین استفاده</a></div><div className="notify"><b>فرصت خوب را از دست نده</b><p>اعلان هوشمند خودروهای منتخب</p><button onClick={onNotify}><Bell/> خبرم کن</button></div></div><div className="wrap copyright"><span>© ۱۴۰۵ خودروتو — همه حقوق محفوظ است.</span><span className="footer-legal"><a href="/privacy">حریم خصوصی</a><a href="/terms">قوانین</a><a href="/contact">پشتیبانی</a></span></div></footer>}
 
 function ActionModal({type,onClose,onDone}){
  const [phone,setPhone]=useState(''),[code,setCode]=useState(''),[step,setStep]=useState('phone'),[busy,setBusy]=useState(false),[debugCode,setDebugCode]=useState('')
@@ -102,6 +104,8 @@ function App(){
   if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
   if(path==='/admin')return <><AdminPage/>{overlays}</>
+  if(infoPaths.includes(path))return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><InfoPage path={path} onToast={showToast}/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
+  if(path!=='/')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><NotFoundPage/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
   return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats}/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 

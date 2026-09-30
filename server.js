@@ -11,7 +11,9 @@ const divar = createDivarService({ cacheTtlMs: cacheTtl, cacheFile: process.env.
 const store = createDatabase()
 const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('='))).khodroto_session
 const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
-const adminOnly=(req,res,next)=>requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
+const adminPreview=process.env.ADMIN_PREVIEW==='true'&&process.env.NODE_ENV!=='production'
+const adminOnly=(req,res,next)=>adminPreview?(req.user={id:0,name:'مدیر پیش‌نمایش',role:'admin'},next()):requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
+const contactAttempts=new Map()
 
 async function persistCrawl(result, { verifyMissing = true } = {}) {
   const category = result.category || 'light'
@@ -26,6 +28,7 @@ async function persistCrawl(result, { verifyMissing = true } = {}) {
 }
 
 app.disable('x-powered-by')
+app.set('trust proxy',1)
 app.use(express.json({ limit: '20kb' }))
 
 function searchFilters(query) {
@@ -73,6 +76,8 @@ app.get('/api/alerts',requireUser,(req,res)=>res.json({items:store.alerts(req.us
 app.post('/api/alerts',requireUser,(req,res)=>{store.createAlert(req.user.id,{title:String(req.body.title||'هشدار خودرو').slice(0,100),filters:req.body.filters||{}});res.status(201).json({ok:true})})
 app.patch('/api/alerts/:id',requireUser,(req,res)=>{store.toggleAlert(req.user.id,Number(req.params.id),Boolean(req.body.enabled));res.json({ok:true})})
 app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{subject:String(req.body.subject||'پشتیبانی').slice(0,100),message:String(req.body.message||'').slice(0,2000)});res.status(201).json({ok:true})})
+app.post('/api/contact',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now(),recent=(contactAttempts.get(key)||[]).filter(time=>stamp-time<600000);if(recent.length>=5)return res.status(429).json({error:'RATE_LIMITED'});const name=String(req.body?.name||'').trim().slice(0,80),contact=String(req.body?.contact||'').trim().slice(0,120),subject=String(req.body?.subject||'').trim().slice(0,100),message=String(req.body?.message||'').trim().slice(0,2000);if(name.length<2||contact.length<5||subject.length<2||message.length<10)return res.status(400).json({error:'INVALID_INPUT'});contactAttempts.set(key,[...recent,stamp]);store.createTicket(null,{subject:`${subject} — ${name}`,message:`راه ارتباطی: ${contact}\n\n${message}`});res.status(201).json({ok:true})})
+
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
 app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plans={pro:199000,dealer:499000},plan=String(req.body.plan||'');if(!plans[plan])return res.status(400).json({error:'INVALID_PLAN'});res.json({subscription:store.subscribe(req.user.id,plan,plans[plan]),mode:process.env.PAYMENT_GATEWAY?'gateway':'sandbox'})})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
@@ -128,6 +133,7 @@ setInterval(warmMarketCache, cacheTtl).unref()
 
 // Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
 // one unambiguous port; all client-side routes fall back to index.html.
+if(process.env.PREVIEW_ROUTE&&process.env.NODE_ENV!=='production')app.get('/',(_req,res)=>res.redirect(process.env.PREVIEW_ROUTE))
 const dist = path.resolve('dist')
 app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
 app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
