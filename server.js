@@ -1,5 +1,5 @@
 import express from 'express'
-import { createServer as createViteServer } from 'vite'
+import path from 'node:path'
 import { fallbackCars } from './src/data.js'
 import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
 
@@ -77,6 +77,9 @@ const warmMarketCache = () => divar.refresh({}).then(result => console.log(`[div
 warmMarketCache()
 setInterval(warmMarketCache, cacheTtl).unref()
 
-const vite = await createViteServer({ server: { middlewareMode: true, allowedHosts: true }, appType: 'spa' })
-app.use(vite.middlewares)
+// Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
+// one unambiguous port; all client-side routes fall back to index.html.
+const dist = path.resolve('dist')
+app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
+app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
 app.listen(PORT, '0.0.0.0', () => console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`))

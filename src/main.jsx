@@ -6,11 +6,14 @@ import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Hea
 import { fallbackCars } from './data'
 import './styles.css'
 import './pages.css'
+import './motion.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
 
-function Brand(){ return <a className="brand" href="/" aria-label="خودروتو"><span className="brand-mark"><span /></span><strong>خودروتو</strong></a> }
+function Brand(){ return <a className="brand" href="/" aria-label="خودروتو"><img className="brand-logo" src="/brand/khodroto-mark.svg" alt=""/><strong>خودروتو</strong></a> }
+
+function AnnouncementBar(){const [show,setShow]=useState(()=>sessionStorage.getItem('khodroto:announcement')!=='closed');if(!show)return null;return <div className="announcement"><Sparkles/><span><b>گزارش تازه بازار خودرو آماده است</b> — فرصت‌های زیر قیمت امروز را قبل از بقیه ببین.</span><a href="/cars">مشاهده فرصت‌ها <ArrowLeft/></a><button onClick={()=>{setShow(false);sessionStorage.setItem('khodroto:announcement','closed')}} aria-label="بستن"><X/></button></div>}
 
 function Header({onLogin}){
   const [open,setOpen]=useState(false)
@@ -25,7 +28,7 @@ function Hero(){ return <main id="top" className="hero"><div className="wrap her
   <p>خودروتو آگهی‌های دیوار را بررسی می‌کند، قیمت هر خودرو را با نمونه‌های مشابه می‌سنجد و فرصت‌های واقعی را برایت جدا می‌کند.</p>
   <div className="hero-actions"><a className="primary" href="#search">دیدن فرصت‌های امروز <ArrowLeft size={18}/></a><a href="#method" className="text-link">خودروتو چطور کار می‌کند؟</a></div>
   <div className="trust"><span><Check/> بدون آگهی تکراری</span><span><Check/> قیمت‌گذاری شفاف</span><span><Check/> لینک مستقیم به دیوار</span></div>
-  </section><section className="hero-visual"><div className="hero-image"><img src="/khodroto-hero.jpg" alt="خودروهای منتخب در پارکینگ شهری"/>
+  </section><section className="hero-visual"><div className="hero-image"><img src="/khodroto-market-banner.jpg" alt="مجموعه خودروهای منتخب خودروتو"/>
   <div className="floating-card"><span className="pulse"/><div><b>فرصت تازه پیدا شد</b><small>پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار</small></div><strong>۹۱</strong></div>
   <div className="image-stat"><b>۲٬۴۸۶</b><span>آگهی بررسی‌شده امروز</span></div></div></section>
   </div></main> }
@@ -51,6 +54,8 @@ function CarCard({car,index,onToast}){
  </div></article> }
 
 function Opportunities({cars,status,notice,loading,total,onLoadMore,onToast}){const live=['kenar','divar-web'].includes(status),hasMore=cars.length<total;return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>{num(total)} فرصت از میان آگهی‌های کش‌شده و تحلیل‌شده.</p></div><div className={'live '+(live?'':'demo')}><span/>{loading?'در حال دریافت آگهی‌ها…':status==='kenar'?'متصل به API رسمی کنار دیوار':status==='divar-web'?'متصل مستقیم به آگهی‌های دیوار':'نسخه نمایشی با داده نمونه'}</div></div>{notice&&<div className="data-notice">{notice}</div>}<div className="cards">{cars.map((c,i)=><CarCard car={c} index={i} key={c.id} onToast={onToast}/>)}</div>{!cars.length&&<div className="empty">با این فیلتر فرصتی پیدا نشد؛ محدوده جست‌وجو را تغییر بده.</div>}<div className="all">{hasMore?<button className="secondary" onClick={onLoadMore} disabled={loading}>{loading?'در حال دریافت…':'مشاهده فرصت‌های بیشتر'} <ArrowLeft/></button>:cars.length>6&&<span className="all-loaded"><Check/> همه نتایج موجود نمایش داده شد</span>}<p>{live?'کش بازار هر ۱۰ دقیقه در پس‌زمینه به‌روزرسانی می‌شود':'اتصال سرور به دیوار برقرار نشد؛ داده نمونه نمایش داده شده است'}</p></div></div></section>}
+
+function CampaignBanner(){return <section className="campaign-wrap"><div className="wrap campaign"><img src="/khodroto-market-banner.jpg" alt="کمپین اختصاصی خودروتو"/><div className="campaign-shade"/><div className="campaign-copy"><span><Sparkles/> عضویت حرفه‌ای خودروتو</span><h2>فرصت خوب منتظر نمی‌ماند.</h2><p>هشدار لحظه‌ای، فیلترهای کامل و دسترسی به همه نتایج زیر قیمت.</p><a href="/pricing" className="primary">دیدن پلن‌ها <ArrowLeft/></a></div><div className="campaign-badge"><b>۳۰٪</b><small>تخفیف شروع</small></div></div></section>}
 
 function Method(){ const items=[{n:'۰۱',icon:<Search/>,title:'آگهی‌ها را پیدا می‌کنیم',text:'آگهی‌های عمومی خودرو بررسی و موارد تکراری، بدون قیمت یا ناقص حذف می‌شوند.'},{n:'۰۲',icon:<BarChart3/>,title:'قیمت را مقایسه می‌کنیم',text:'هر خودرو با مدل، سال، کارکرد، وضعیت و آگهی‌های مشابه همان شهر سنجیده می‌شود.'},{n:'۰۳',icon:<Gauge/>,title:'فرصت‌ها امتیاز می‌گیرند',text:'به‌صرفه‌ترین گزینه‌ها با امتیاز شفاف، دلیل انتخاب و لینک مستقیم نمایش داده می‌شوند.'}]
 return <section id="method" className="method"><div className="wrap"><div className="center-head"><span className="kicker">فرآیند خودروتو</span><h2>از هزاران آگهی تا چند انتخاب درست</h2><p>نه حدس می‌زنیم، نه پیشنهاد تبلیغاتی می‌دهیم؛ فقط داده‌ها را قابل‌فهم می‌کنیم.</p></div><div className="steps">{items.map(x=><article key={x.n}><span className="step-num">{x.n}</span><div className="step-icon">{x.icon}</div><h3>{x.title}</h3><p>{x.text}</p></article>)}</div></div></section>}
@@ -88,10 +93,10 @@ function App(){
   function loadMore(){loadListings(filters,Math.min(200,cars.length+12))}
   const path=window.location.pathname.replace(/\/$/,'')||'/'
   const overlays=<>{modal&&<ActionModal type={modal} onClose={()=>setModal(null)} onDone={showToast}/>} {toast&&<div className="toast"><Check/>{toast}</div>}</>
-  if(path==='/cars')return <><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
-  if(path==='/pricing')return <><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
+  if(path==='/cars')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
+  if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
-  return <><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
+  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)
