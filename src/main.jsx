@@ -1,0 +1,59 @@
+import React, { useEffect, useMemo, useState } from 'react'
+import { createRoot } from 'react-dom/client'
+import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { fallbackCars } from './data'
+import './styles.css'
+
+const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
+const num = n => new Intl.NumberFormat('fa-IR').format(n)
+
+function Brand(){ return <a className="brand" href="#top" aria-label="خودروتو"><span className="brand-mark"><span /></span><strong>خودروتو</strong></a> }
+
+function Header(){
+  const [open,setOpen]=useState(false)
+  return <header className="header"><div className="wrap nav"><Brand/><nav className={open?'open':''}>
+    <a href="#opportunities">فرصت‌های خرید</a><a href="#method">چطور کار می‌کند؟</a><a href="#score">راهنمای امتیاز</a><a href="#faq">پرسش‌ها</a>
+  </nav><div className="nav-actions"><button className="login">ورود</button><a className="primary small" href="#search">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
+}
+
+function Hero(){ return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
+  <div className="eyebrow"><Sparkles size={15}/> تحلیل هوشمند آگهی‌های خودرو</div>
+  <h1>ماشین خوب را<br/><em>قبل از بقیه</em> پیدا کن.</h1>
+  <p>خودروتو آگهی‌های دیوار را بررسی می‌کند، قیمت هر خودرو را با نمونه‌های مشابه می‌سنجد و فرصت‌های واقعی را برایت جدا می‌کند.</p>
+  <div className="hero-actions"><a className="primary" href="#search">دیدن فرصت‌های امروز <ArrowLeft size={18}/></a><a href="#method" className="text-link">خودروتو چطور کار می‌کند؟</a></div>
+  <div className="trust"><span><Check/> بدون آگهی تکراری</span><span><Check/> قیمت‌گذاری شفاف</span><span><Check/> لینک مستقیم به دیوار</span></div>
+  </section><section className="hero-visual"><div className="hero-image"><img src="/khodroto-hero.jpg" alt="خودروهای منتخب در پارکینگ شهری"/>
+  <div className="floating-card"><span className="pulse"/><div><b>فرصت تازه پیدا شد</b><small>پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار</small></div><strong>۹۱</strong></div>
+  <div className="image-stat"><b>۲٬۴۸۶</b><span>آگهی بررسی‌شده امروز</span></div></div></section>
+  </div></main> }
+
+function SearchPanel({onSearch}){
+ const [brand,setBrand]=useState('همه برندها'); const [budget,setBudget]=useState('همه قیمت‌ها'); const [year,setYear]=useState('همه سال‌ها')
+ const selects=[['برند و مدل',brand,setBrand,['همه برندها','پژو','ایران خودرو','سایپا','مدیران خودرو']],['بازه قیمت',budget,setBudget,['همه قیمت‌ها','تا ۷۰۰ میلیون','۷۰۰ میلیون تا ۱.۲ میلیارد','بیشتر از ۱.۲ میلیارد']],['سال ساخت',year,setYear,['همه سال‌ها','۱۴۰۳ به بالا','۱۴۰۰ تا ۱۴۰۲','پیش از ۱۴۰۰']]]
+ return <section id="search" className="search-wrap"><div className="wrap"><div className="search-panel"><div className="search-heading"><div className="search-icon"><Search/></div><div><b>دنبال چه خودرویی هستی؟</b><span>انتخاب‌ها اختیاری هستند</span></div></div><div className="fields">{selects.map(([label,value,setter,options])=><label key={label}><span>{label}</span><div><select value={value} onChange={e=>setter(e.target.value)}>{options.map(o=><option key={o}>{o}</option>)}</select><ChevronDown/></div></label>)}<button onClick={()=>onSearch({brand,budget,year})} className="primary search-button">نمایش فرصت‌ها <Search size={18}/></button></div></div></div></section>
+}
+
+function CarCard({car,index}){ return <article className="car-card">
+ <div className="car-img"><img src={car.image || '/khodroto-hero.jpg'} style={{objectPosition:car.imagePos || 'center'}} alt={car.title}/><span className="time">{car.freshness}</span><button aria-label="ذخیره"><Heart/></button></div>
+ <div className="car-body"><div className="card-top"><div><span className="place">{car.city}</span><h3>{car.title}</h3></div><div className={'score '+(car.score>=85?'gold':'')}><b>{num(car.score)}</b><span>{car.score>=85?'فرصت عالی':'زیر قیمت'}</span></div></div>
+ <div className="specs"><span>مدل {num(car.year)}</span><i/><span>{num(car.km)} کیلومتر</span><i/><span>{car.color}</span></div>
+ <div className="prices"><div><small>قیمت آگهی</small><strong>{toman(car.price)} <em>میلیون تومان</em></strong></div><div><small>ارزش تخمینی بازار</small><del>{toman(car.market)} میلیون</del></div></div>
+ <div className="saving"><span><Sparkles/> حدود {toman(car.market-car.price)} میلیون تومان به‌صرفه‌تر</span><b>{num(car.discount)}٪ زیر بازار</b></div>
+ <div className="compare"><div><span style={{width:`${Math.min(94,48+car.discount*3)}%`}}/></div><small>مقایسه با {num(24+index*7)} آگهی مشابه</small></div>
+ <a className="divar-link" href={car.link} target="_blank" rel="noreferrer">مشاهده آگهی در دیوار <ArrowUpLeft/></a>
+ </div></article> }
+
+function Opportunities({cars,status}){return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>خودروهایی که نسبت به نمونه‌های مشابه، قیمت منطقی‌تری دارند.</p></div><div className="live"><span/>{status==='live'?'متصل به دیوار':'نسخه نمایشی با داده نمونه'}</div></div><div className="cards">{cars.map((c,i)=><CarCard car={c} index={i} key={c.id}/>)}</div><div className="all"><button className="secondary">مشاهده همه فرصت‌ها <ArrowLeft/></button><p>هر ۱۵ دقیقه آگهی‌های تازه بررسی می‌شوند</p></div></div></section>}
+
+function Method(){ const items=[{n:'۰۱',icon:<Search/>,title:'آگهی‌ها را پیدا می‌کنیم',text:'آگهی‌های عمومی خودرو بررسی و موارد تکراری، بدون قیمت یا ناقص حذف می‌شوند.'},{n:'۰۲',icon:<BarChart3/>,title:'قیمت را مقایسه می‌کنیم',text:'هر خودرو با مدل، سال، کارکرد، وضعیت و آگهی‌های مشابه همان شهر سنجیده می‌شود.'},{n:'۰۳',icon:<Gauge/>,title:'فرصت‌ها امتیاز می‌گیرند',text:'به‌صرفه‌ترین گزینه‌ها با امتیاز شفاف، دلیل انتخاب و لینک مستقیم نمایش داده می‌شوند.'}]
+return <section id="method" className="method"><div className="wrap"><div className="center-head"><span className="kicker">فرآیند خودروتو</span><h2>از هزاران آگهی تا چند انتخاب درست</h2><p>نه حدس می‌زنیم، نه پیشنهاد تبلیغاتی می‌دهیم؛ فقط داده‌ها را قابل‌فهم می‌کنیم.</p></div><div className="steps">{items.map(x=><article key={x.n}><span className="step-num">{x.n}</span><div className="step-icon">{x.icon}</div><h3>{x.title}</h3><p>{x.text}</p></article>)}</div></div></section>}
+
+function Score(){return <section id="score" className="score-section"><div className="wrap score-grid"><div><span className="kicker light">امتیاز خودروتو</span><h2>یک عدد ساده برای<br/>یک تصمیم مهم</h2><p>امتیاز از ترکیب فاصله قیمت با بازار، تعداد نمونه‌های مشابه، تازگی آگهی و کیفیت اطلاعات ساخته می‌شود.</p><div className="shield"><ShieldCheck/><span><b>تحلیل قابل توضیح</b><small>دلیل هر امتیاز را کنار همان خودرو می‌بینی.</small></span></div></div><div className="score-card"><div className="dial"><span>۹۱</span><small>از ۱۰۰</small></div><h3>فرصت عالی</h3><p>قیمت این خودرو با توجه به مدل، کارکرد و شهر، حدود ۱۲٪ پایین‌تر از بازار است.</p><div className="legend"><span><i className="l1"/>۸۵ تا ۱۰۰ <b>فرصت عالی</b></span><span><i className="l2"/>۷۰ تا ۸۴ <b>زیر قیمت</b></span><span><i className="l3"/>۵۰ تا ۶۹ <b>قیمت منصفانه</b></span></div></div></div></section>}
+
+function FAQ(){const qs=['اطلاعات خودروها از کجا می‌آید؟','امتیاز خودروتو چطور محاسبه می‌شود؟','آیا خودروتو فروشنده خودرو است؟']; const [open,setOpen]=useState(0); return <section id="faq" className="faq"><div className="wrap faq-grid"><div><span className="kicker">پرسش‌های پرتکرار</span><h2>چیزی مبهم مانده؟</h2><p>قبل از تماس یا معامله، اطلاعات آگهی و سلامت خودرو را مستقلاً بررسی کن.</p></div><div>{qs.map((q,i)=><article className={open===i?'open':''} key={q}><button onClick={()=>setOpen(open===i?-1:i)}><b>{q}</b><span>{open===i?<X/>:<span>＋</span>}</span></button>{open===i&&<p>{i===0?'در نسخه عملیاتی، داده‌های آگهی‌های عمومی دیوار از مسیر مجاز دریافت، پالایش و تحلیل می‌شوند. این پیش‌نمایش برای ارزیابی تجربه کاربری از داده نمونه استفاده می‌کند.':i===1?'فاصله قیمت با خودروهای هم‌مدل، سال ساخت، کارکرد، شهر، تازگی آگهی و میزان اطمینان داده در امتیاز مؤثر است.':'خیر. خودروتو فقط موتور جست‌وجو و تحلیل آگهی است و در خرید، فروش یا کارشناسی خودرو دخالتی ندارد.'}</p>}</article>)}</div></div></section>}
+
+function Footer(){return <footer><div className="wrap footer-top"><div><Brand/><p>ماشین خوب، قیمت درست.</p></div><div><b>خودروتو</b><a href="#method">درباره ما</a><a href="#faq">پرسش‌ها</a></div><div><b>سرویس</b><a href="#opportunities">فرصت‌ها</a><a href="#score">راهنمای امتیاز</a></div><div className="notify"><b>فرصت خوب را از دست نده</b><p>به‌زودی: اعلان هوشمند خودروهای منتخب</p><button><Bell/> خبرم کن</button></div></div><div className="wrap copyright"><span>© ۱۴۰۵ خودروتو — همه حقوق محفوظ است.</span><span>ساخته‌شده برای خرید آگاهانه</span></div></footer>}
+
+function App(){const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[toast,setToast]=useState(''); useEffect(()=>{fetch('/api/listings').then(r=>r.ok?r.json():Promise.reject()).then(d=>{if(d.items?.length){setCars(d.items);setStatus(d.source==='divar'?'live':'demo')}}).catch(()=>{})},[]); function search(){setToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.'); setTimeout(()=>setToast(''),3200); document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})} return <><Header/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status}/><Method/><Score/><FAQ/><Footer/>{toast&&<div className="toast"><Check/>{toast}</div>}</>}
+
+createRoot(document.getElementById('root')).render(<App/>)
