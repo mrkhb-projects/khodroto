@@ -1,3 +1,6 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
 const KENAR_BASE_URL = 'https://open-api.divar.ir'
 const WEB_BASE_URL = 'https://api.divar.ir'
 
@@ -249,42 +252,107 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   } }
   const searchData = { form_data: { data: formData } }
   if (filters.queryText) searchData.query = filters.queryText
-  const body = {
+  const baseBody = {
     city_ids: cityIds.length ? cityIds : ['1'],
     search_data: searchData,
-    pagination_data: { '@type': 'type.googleapis.com/post_list.PaginationData', page: 1, page_size: 60 },
     disable_recommendation: false,
     current_tab_slug: 'default',
   }
-  const payload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/search`, {
-    method: 'POST', provider: 'web', headers: webHeaders(), body: JSON.stringify(body),
-  }, fetchImpl)
-  const normalized = (payload.list_widgets || []).filter(widget => widget.widget_type === 'POST_ROW').map(normalizeWebItem).filter(item => item.id && item.price)
-  const ranked = rankListings(applyLocalFilters(normalized, filters)).slice(0, 6)
-  const items = await Promise.all(ranked.map(item => enrichWebItem(item, env, fetchImpl)))
-  return { source: 'divar-web', items, totalAnalyzed: normalized.length, updatedAt: new Date().toISOString() }
+  const requestedMaxPages = Number(env.DIVAR_MAX_PAGES ?? 0)
+  const hardMaxPages = Math.max(1, Number(env.DIVAR_HARD_MAX_PAGES) || 500)
+  const maxPages = requestedMaxPages > 0 ? Math.min(requestedMaxPages, hardMaxPages) : hardMaxPages
+  const requestDelay = Math.max(0, Number(env.DIVAR_REQUEST_DELAY_MS) || 450)
+  const rows = []
+  const seen = new Set()
+  let cursor = null
+  let page = 1
+  let pagesFetched = 0
+  let hasNextPage = true
+
+  while (hasNextPage && page <= maxPages) {
+    const paginationData = cursor
+      ? { '@type': 'type.googleapis.com/post_list.PaginationData', page, page_size: 60, ...cursor }
+      : { '@type': 'type.googleapis.com/post_list.PaginationData', page: 1, page_size: 60 }
+    const payload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/search`, {
+      method: 'POST', provider: 'web', headers: webHeaders(), body: JSON.stringify({ ...baseBody, pagination_data: paginationData }),
+    }, fetchImpl)
+    pagesFetched += 1
+    for (const widget of payload.list_widgets || []) {
+      if (widget.widget_type !== 'POST_ROW') continue
+      const item = normalizeWebItem(widget)
+      if (item.id && item.price && !seen.has(item.id)) { seen.add(item.id); rows.push(item) }
+    }
+    const pagination = payload.pagination || {}
+    hasNextPage = Boolean(pagination.has_next_page && pagination.data)
+    if (!hasNextPage) break
+    cursor = { ...pagination.data }
+    for (const key of ['@type', 'search_uid', 'viewed_tokens']) delete cursor[key]
+    page += 1
+    if (requestDelay) await new Promise(resolve => setTimeout(resolve, requestDelay))
+  }
+
+  const ranked = rankListings(applyLocalFilters(rows, filters))
+  const enrichedTop = await Promise.all(ranked.slice(0, 12).map(item => enrichWebItem(item, env, fetchImpl)))
+  const items = [...enrichedTop, ...ranked.slice(12)]
+  return { source: 'divar-web', items, totalAnalyzed: rows.length, pagesFetched, truncated: hasNextPage, updatedAt: new Date().toISOString() }
 }
 
-export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 15 * 60 * 1000 } = {}) {
+export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null } = {}) {
   const cache = new Map()
   const inflight = new Map()
+  let hydrated = false
+  let writing = Promise.resolve()
+
+  async function hydrateCache() {
+    if (hydrated) return
+    hydrated = true
+    if (!cacheFile) return
+    try {
+      const stored = JSON.parse(await fs.readFile(cacheFile, 'utf8'))
+      for (const [key, value] of stored.entries || []) if (value?.value?.items) cache.set(key, value)
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.warn(`[divar:cache] Could not read cache: ${error.message}`)
+    }
+  }
+
+  function persistCache() {
+    if (!cacheFile) return
+    writing = writing.then(async () => {
+      await fs.mkdir(path.dirname(cacheFile), { recursive: true })
+      const temporary = `${cacheFile}.tmp`
+      await fs.writeFile(temporary, JSON.stringify({ version: 1, entries: [...cache.entries()] }))
+      await fs.rename(temporary, cacheFile)
+    }).catch(error => console.warn(`[divar:cache] Could not write cache: ${error.message}`))
+  }
   const requestedProvider = String(env.DIVAR_PROVIDER || '').toLowerCase()
   const provider = requestedProvider === 'disabled' ? 'none' : requestedProvider === 'kenar' ? (env.KENAR_API_KEY ? 'kenar' : 'none') : env.KENAR_API_KEY && requestedProvider !== 'web' ? 'kenar' : 'web'
 
-  async function listings(filters = {}) {
+  async function refresh(filters = {}) {
+    await hydrateCache()
     const key = JSON.stringify(filters)
-    const cached = cache.get(key)
-    if (cached && Date.now() - cached.time < cacheTtlMs) return { ...cached.value, cached: true }
     if (inflight.has(key)) return inflight.get(key)
     const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
-      .then(value => { cache.set(key, { time: Date.now(), value }); return value })
+      .then(value => { cache.set(key, { time: Date.now(), value }); persistCache(); return value })
       .finally(() => inflight.delete(key))
     inflight.set(key, request)
     return request
   }
 
+  async function listings(filters = {}) {
+    await hydrateCache()
+    const key = JSON.stringify(filters)
+    const cached = cache.get(key)
+    if (cached && Date.now() - cached.time < cacheTtlMs) return { ...cached.value, cached: true }
+    if (cached) {
+      refresh(filters).catch(() => {})
+      return { ...cached.value, cached: true, stale: true }
+    }
+    return refresh(filters)
+  }
+
   return {
     listings,
-    status: () => ({ configured: provider !== 'none', provider, official: provider === 'kenar', cacheTtlMinutes: cacheTtlMs / 60000 }),
+    refresh,
+    status: () => ({ configured: provider !== 'none', provider, official: provider === 'kenar', cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, refreshing: inflight.size > 0 }),
   }
 }

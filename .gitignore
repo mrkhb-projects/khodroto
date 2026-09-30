@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 .DS_Store
+data/divar-cache.json
+data/divar-cache.json.tmp

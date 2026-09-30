@@ -5,8 +5,8 @@ import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
 
 const app = express()
 const PORT = process.env.PORT || 5173
-const cacheTtl = Math.max(5, Number(process.env.DIVAR_CACHE_TTL_MINUTES) || 15) * 60 * 1000
-const divar = createDivarService({ cacheTtlMs: cacheTtl })
+const cacheTtl = Math.max(5, Number(process.env.DIVAR_CACHE_TTL_MINUTES) || 10) * 60 * 1000
+const divar = createDivarService({ cacheTtlMs: cacheTtl, cacheFile: process.env.DIVAR_CACHE_FILE || 'data/divar-cache.json' })
 
 app.disable('x-powered-by')
 app.use(express.json({ limit: '20kb' }))
@@ -41,14 +41,18 @@ app.get('/api/integration/status', (_req, res) => {
 app.get('/api/listings', async (req, res) => {
   try {
     const result = await divar.listings(searchFilters(req.query))
+    const filtered = applyBudget(result.items, String(req.query.budget || ''))
+    const offset = Math.max(0, Number(req.query.offset) || 0)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...result, items: applyBudget(result.items, String(req.query.budget || '')), integration: divar.status() })
+    res.json({ ...result, items: filtered.slice(offset, offset + limit), totalMatches: filtered.length, offset, limit, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
     res.status(200).json({
       source: 'demo',
-      items: applyBudget(fallbackCars, String(req.query.budget || '')),
+      items: applyBudget(fallbackCars, String(req.query.budget || '')).slice(0, Math.min(200, Math.max(1, Number(req.query.limit) || 6))),
+      totalMatches: applyBudget(fallbackCars, String(req.query.budget || '')).length,
       notice: known && error.code === 'NOT_CONFIGURED'
         ? 'برای فعال‌شدن داده زنده، کلید رسمی کنار دیوار باید در محیط سرور تنظیم شود.'
         : 'ارتباط با دیوار موقتاً برقرار نشد؛ داده نمونه نمایش داده می‌شود.',
@@ -56,6 +60,12 @@ app.get('/api/listings', async (req, res) => {
     })
   }
 })
+
+// Warm the default market cache now and refresh it every ten minutes. A stale cache is
+// served immediately while the next crawl runs in the background.
+const warmMarketCache = () => divar.refresh({}).then(result => console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+warmMarketCache()
+setInterval(warmMarketCache, cacheTtl).unref()
 
 const vite = await createViteServer({ server: { middlewareMode: true, allowedHosts: true }, appType: 'spa' })
 app.use(vite.middlewares)
