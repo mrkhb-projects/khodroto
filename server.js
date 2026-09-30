@@ -31,15 +31,17 @@ function searchFilters(query) {
     color: String(query.color || '').slice(0,30) || undefined,
     seller: String(query.seller || '').slice(0,30) || undefined,
     sort: ['score','newest','cheap','expensive'].includes(String(query.sort)) ? String(query.sort) : 'score',
-    minPrice: directNumber(query.minPrice) || (budget.includes('بیشتر') ? 1_200_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 700_000_000 : undefined),
-    maxPrice: directNumber(query.maxPrice) || (budget.includes('تا ۷۰۰') ? 700_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 1_200_000_000 : undefined),
+    minPrice: directNumber(query.minPrice) || (budget.includes('بیشتر از ۲') ? 2_000_000_000 : budget.includes('۱.۲ تا ۲') ? 1_200_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 700_000_000 : undefined),
+    maxPrice: directNumber(query.maxPrice) || (budget.includes('تا ۵۰۰') ? 500_000_000 : budget.includes('تا ۷۰۰') ? 700_000_000 : budget.includes('۱.۲ تا ۲') ? 2_000_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 1_200_000_000 : undefined),
   }
 }
 
 function applyBudget(items, budget = '') {
+  if (budget.includes('تا ۵۰۰')) return items.filter(item => item.price <= 500_000_000)
   if (budget.includes('تا ۷۰۰')) return items.filter(item => item.price <= 700_000_000)
   if (budget.includes('۷۰۰') && budget.includes('۱.۲')) return items.filter(item => item.price >= 700_000_000 && item.price <= 1_200_000_000)
-  if (budget.includes('بیشتر')) return items.filter(item => item.price >= 1_200_000_000)
+  if (budget.includes('۱.۲ تا ۲')) return items.filter(item => item.price >= 1_200_000_000 && item.price <= 2_000_000_000)
+  if (budget.includes('بیشتر از ۲')) return items.filter(item => item.price >= 2_000_000_000)
   return items
 }
 

@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { CarsPage, DashboardPage, PricingPage } from './pages'
-import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
 import './styles.css'
 import './pages.css'
 import './motion.css'
+import './search.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
@@ -34,9 +35,12 @@ function Hero(){ return <main id="top" className="hero"><div className="wrap her
   </div></main> }
 
 function SearchPanel({onSearch}){
- const [brand,setBrand]=useState('همه برندها'); const [budget,setBudget]=useState('همه قیمت‌ها'); const [year,setYear]=useState('همه سال‌ها')
- const selects=[['برند و مدل',brand,setBrand,['همه برندها','پژو','ایران خودرو','سایپا','مدیران خودرو']],['بازه قیمت',budget,setBudget,['همه قیمت‌ها','تا ۷۰۰ میلیون','۷۰۰ میلیون تا ۱.۲ میلیارد','بیشتر از ۱.۲ میلیارد']],['سال ساخت',year,setYear,['همه سال‌ها','۱۴۰۳ به بالا','۱۴۰۰ تا ۱۴۰۲','پیش از ۱۴۰۰']]]
- return <section id="search" className="search-wrap"><div className="wrap"><div className="search-panel"><div className="search-heading"><div className="search-icon"><Search/></div><div><b>دنبال چه خودرویی هستی؟</b><span>انتخاب‌ها اختیاری هستند</span></div></div><div className="fields">{selects.map(([label,value,setter,options])=><label key={label}><span>{label}</span><div><select value={value} onChange={e=>setter(e.target.value)}>{options.map(o=><option key={o}>{o}</option>)}</select><ChevronDown/></div></label>)}<button onClick={()=>onSearch({brand,budget,year})} className="primary search-button">نمایش فرصت‌ها <Search size={18}/></button></div></div></div></section>
+ const initial={city:'1',brand:'همه برندها',query:'',budget:'همه قیمت‌ها',year:'همه سال‌ها',maxUsage:'',gearbox:'',body:''}
+ const [form,setForm]=useState(initial),[advanced,setAdvanced]=useState(false)
+ const models={پژو:['۲۰۶','۲۰۷','پارس'], 'ایران خودرو':['دنا','تارا','رانا','سمند'],سایپا:['شاهین','کوییک','ساینا','پراید'],'مدیران خودرو':['آریزو','تیگو','ام‌وی‌ام']}
+ const set=(key,value)=>setForm({...form,[key]:value})
+ const SelectField=({label,name,options})=><label><span>{label}</span><div><select value={form[name]} onChange={e=>set(name,e.target.value)}>{options.map(o=><option value={Array.isArray(o)?o[0]:o} key={Array.isArray(o)?o[0]:o}>{Array.isArray(o)?o[1]:o}</option>)}</select><ChevronDown/></div></label>
+ return <section id="search" className="search-wrap"><div className="wrap"><div className="search-panel rich-search"><div className="search-heading"><div className="search-icon"><Search/></div><div><b>دنبال چه خودرویی هستی؟</b><span>جست‌وجوی دقیق میان آگهی‌های خودرو؛ همه انتخاب‌ها اختیاری‌اند</span></div><a href="/cars">جست‌وجوی حرفه‌ای <ArrowLeft/></a></div><div className="fields main-fields"><SelectField label="شهر" name="city" options={[["1","تهران"],["2","کرج"],["3","مشهد"],["4","اصفهان"],["6","شیراز"],["8","تبریز"],["5","رشت"],["10","قم"]]}/><SelectField label="برند" name="brand" options={['همه برندها','پژو','ایران خودرو','سایپا','مدیران خودرو','کرمان موتور','هیوندای','کیا','تویوتا']}/><label><span>مدل یا عبارت جست‌وجو</span><div className="search-text-field"><input value={form.query} onChange={e=>set('query',e.target.value)} placeholder={form.brand==='همه برندها'?'مثلاً ۲۰۷ اتوماتیک':models[form.brand]?.join('، ')||'نام مدل خودرو'}/><Search/></div></label><SelectField label="بازه قیمت" name="budget" options={['همه قیمت‌ها','تا ۵۰۰ میلیون','تا ۷۰۰ میلیون','۷۰۰ میلیون تا ۱.۲ میلیارد','۱.۲ تا ۲ میلیارد','بیشتر از ۲ میلیارد']}/><SelectField label="سال ساخت" name="year" options={['همه سال‌ها','۱۴۰۳ به بالا','۱۴۰۰ تا ۱۴۰۲','۱۳۹۵ تا ۱۳۹۹','پیش از ۱۳۹۵']}/><button onClick={()=>onSearch(form)} className="primary search-button">نمایش فرصت‌ها <Search size={18}/></button></div><button className={'advanced-toggle '+(advanced?'open':'')} onClick={()=>setAdvanced(!advanced)}><SlidersHorizontal size={16}/>{advanced?'بستن فیلترهای تکمیلی':'فیلترهای تکمیلی خودرو'}<ChevronDown size={16}/></button>{advanced&&<div className="advanced-fields"><SelectField label="حداکثر کارکرد" name="maxUsage" options={[["","همه کارکردها"],'۲۰٬۰۰۰','۵۰٬۰۰۰','۸۰٬۰۰۰','۱۲۰٬۰۰۰','۲۰۰٬۰۰۰']}/><SelectField label="نوع گیربکس" name="gearbox" options={[["","همه گیربکس‌ها"],'دنده‌ای','اتوماتیک']}/><SelectField label="وضعیت بدنه" name="body" options={[["","همه وضعیت‌ها"],'بدون رنگ','یک لکه رنگ','چند لکه رنگ','تصادفی']}/><button className="clear-search" onClick={()=>setForm(initial)}><X size={14}/> پاک‌کردن فیلترها</button></div>}</div></div></section>
 }
 
 function CarCard({car,index,onToast}){
@@ -79,9 +83,7 @@ function App(){
   async function loadListings(nextFilters=filters,limit=6){
     setLoading(true)
     const params=new URLSearchParams({limit:String(limit)})
-    if(nextFilters.brand&&!nextFilters.brand.startsWith('همه')) params.set('brand',nextFilters.brand)
-    if(nextFilters.budget&&!nextFilters.budget.startsWith('همه')) params.set('budget',nextFilters.budget)
-    if(nextFilters.year&&!nextFilters.year.startsWith('همه')) params.set('year',nextFilters.year)
+    Object.entries(nextFilters).forEach(([key,value])=>{if(value&&!String(value).startsWith('همه'))params.set(key,String(value).replaceAll('٬',''))})
     try{
       const response=await fetch(`/api/listings?${params}`), data=await response.json()
       setCars(data.items||[]);setTotal(data.totalMatches??data.items?.length??0);setStatus(data.source||'demo');setNotice(data.notice||'')
