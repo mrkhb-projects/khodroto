@@ -39,11 +39,11 @@ function CarCard({car,index}){ return <article className="car-card">
  <div className="specs"><span>مدل {num(car.year)}</span><i/><span>{num(car.km)} کیلومتر</span><i/><span>{car.color}</span></div>
  <div className="prices"><div><small>قیمت آگهی</small><strong>{toman(car.price)} <em>میلیون تومان</em></strong></div><div><small>ارزش تخمینی بازار</small><del>{toman(car.market)} میلیون</del></div></div>
  <div className="saving"><span><Sparkles/> حدود {toman(car.market-car.price)} میلیون تومان به‌صرفه‌تر</span><b>{num(car.discount)}٪ زیر بازار</b></div>
- <div className="compare"><div><span style={{width:`${Math.min(94,48+car.discount*3)}%`}}/></div><small>مقایسه با {num(24+index*7)} آگهی مشابه</small></div>
+ <div className="compare"><div><span style={{width:`${Math.min(94,48+car.discount*3)}%`}}/></div><small>مقایسه با {num(car.sampleSize || 24+index*7)} آگهی مشابه</small></div>
  <a className="divar-link" href={car.link} target="_blank" rel="noreferrer">مشاهده آگهی در دیوار <ArrowUpLeft/></a>
  </div></article> }
 
-function Opportunities({cars,status}){return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>خودروهایی که نسبت به نمونه‌های مشابه، قیمت منطقی‌تری دارند.</p></div><div className="live"><span/>{status==='live'?'متصل به دیوار':'نسخه نمایشی با داده نمونه'}</div></div><div className="cards">{cars.map((c,i)=><CarCard car={c} index={i} key={c.id}/>)}</div><div className="all"><button className="secondary">مشاهده همه فرصت‌ها <ArrowLeft/></button><p>هر ۱۵ دقیقه آگهی‌های تازه بررسی می‌شوند</p></div></div></section>}
+function Opportunities({cars,status,notice,loading}){return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>خودروهایی که نسبت به نمونه‌های مشابه، قیمت منطقی‌تری دارند.</p></div><div className={'live '+(status==='live'?'':'demo')}><span/>{loading?'در حال دریافت آگهی‌ها…':status==='live'?'متصل به API رسمی کنار دیوار':'نسخه نمایشی با داده نمونه'}</div></div>{notice&&<div className="data-notice">{notice}</div>}<div className="cards">{cars.map((c,i)=><CarCard car={c} index={i} key={c.id}/>)}</div>{!cars.length&&<div className="empty">با این فیلتر فرصتی پیدا نشد؛ محدوده جست‌وجو را تغییر بده.</div>}<div className="all"><button className="secondary">مشاهده همه فرصت‌ها <ArrowLeft/></button><p>{status==='live'?'نتایج برای کاهش مصرف سهمیه رسمی، ۱۵ دقیقه ذخیره می‌شوند':'پس از تنظیم کلید کنار دیوار، داده‌های واقعی اینجا نمایش داده می‌شوند'}</p></div></div></section>}
 
 function Method(){ const items=[{n:'۰۱',icon:<Search/>,title:'آگهی‌ها را پیدا می‌کنیم',text:'آگهی‌های عمومی خودرو بررسی و موارد تکراری، بدون قیمت یا ناقص حذف می‌شوند.'},{n:'۰۲',icon:<BarChart3/>,title:'قیمت را مقایسه می‌کنیم',text:'هر خودرو با مدل، سال، کارکرد، وضعیت و آگهی‌های مشابه همان شهر سنجیده می‌شود.'},{n:'۰۳',icon:<Gauge/>,title:'فرصت‌ها امتیاز می‌گیرند',text:'به‌صرفه‌ترین گزینه‌ها با امتیاز شفاف، دلیل انتخاب و لینک مستقیم نمایش داده می‌شوند.'}]
 return <section id="method" className="method"><div className="wrap"><div className="center-head"><span className="kicker">فرآیند خودروتو</span><h2>از هزاران آگهی تا چند انتخاب درست</h2><p>نه حدس می‌زنیم، نه پیشنهاد تبلیغاتی می‌دهیم؛ فقط داده‌ها را قابل‌فهم می‌کنیم.</p></div><div className="steps">{items.map(x=><article key={x.n}><span className="step-num">{x.n}</span><div className="step-icon">{x.icon}</div><h3>{x.title}</h3><p>{x.text}</p></article>)}</div></div></section>}
@@ -54,6 +54,23 @@ function FAQ(){const qs=['اطلاعات خودروها از کجا می‌آی�
 
 function Footer(){return <footer><div className="wrap footer-top"><div><Brand/><p>ماشین خوب، قیمت درست.</p></div><div><b>خودروتو</b><a href="#method">درباره ما</a><a href="#faq">پرسش‌ها</a></div><div><b>سرویس</b><a href="#opportunities">فرصت‌ها</a><a href="#score">راهنمای امتیاز</a></div><div className="notify"><b>فرصت خوب را از دست نده</b><p>به‌زودی: اعلان هوشمند خودروهای منتخب</p><button><Bell/> خبرم کن</button></div></div><div className="wrap copyright"><span>© ۱۴۰۵ خودروتو — همه حقوق محفوظ است.</span><span>ساخته‌شده برای خرید آگاهانه</span></div></footer>}
 
-function App(){const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[toast,setToast]=useState(''); useEffect(()=>{fetch('/api/listings').then(r=>r.ok?r.json():Promise.reject()).then(d=>{if(d.items?.length){setCars(d.items);setStatus(d.source==='divar'?'live':'demo')}}).catch(()=>{})},[]); function search(){setToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.'); setTimeout(()=>setToast(''),3200); document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})} return <><Header/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status}/><Method/><Score/><FAQ/><Footer/>{toast&&<div className="toast"><Check/>{toast}</div>}</>}
+function App(){
+  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState('')
+  async function loadListings(filters={}){
+    setLoading(true)
+    const params=new URLSearchParams()
+    if(filters.brand&&!filters.brand.startsWith('همه')) params.set('brand',filters.brand)
+    if(filters.budget&&!filters.budget.startsWith('همه')) params.set('budget',filters.budget)
+    if(filters.year&&!filters.year.startsWith('همه')) params.set('year',filters.year)
+    try{
+      const response=await fetch(`/api/listings?${params}`), data=await response.json()
+      setCars(data.items||[]); setStatus(data.source==='kenar'?'live':'demo'); setNotice(data.notice||'')
+    }catch{setStatus('demo');setNotice('دریافت اطلاعات ممکن نشد؛ داده نمونه نمایش داده می‌شود.')}
+    finally{setLoading(false)}
+  }
+  useEffect(()=>{loadListings()},[])
+  function search(filters){loadListings(filters);setToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.');setTimeout(()=>setToast(''),3200);document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})}
+  return <><Header/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading}/><Method/><Score/><FAQ/><Footer/>{toast&&<div className="toast"><Check/>{toast}</div>}</>
+}
 
 createRoot(document.getElementById('root')).render(<App/>)
