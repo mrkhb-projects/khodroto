@@ -29,21 +29,6 @@ function fa(value) {
 }
 function formatMoney(value) { return fa(value.toLocaleString('en-US')); }
 function cityName(value) { return {tehran:'تهران',karaj:'کرج',mashhad:'مشهد',isfahan:'اصفهان',shiraz:'شیراز'}[value] || value; }
-const divarCities = { tehran: 'tehran', karaj: 'karaj', mashhad: 'mashhad', isfahan: 'isfahan', shiraz: 'shiraz' };
-function updateDivarSearch() {
-  const city = document.getElementById('city').value;
-  const link = document.getElementById('divar-search');
-  const slug = divarCities[city];
-  if (!slug) {
-    link.href = 'https://divar.ir/';
-    link.textContent = 'ابتدا یک شهر را انتخاب کن';
-    link.setAttribute('aria-disabled', 'true');
-    return;
-  }
-  link.href = `https://divar.ir/s/${slug}/car`;
-  link.innerHTML = `جست‌وجوی خودرو در دیوارِ ${cityName(city)} <span>↗</span>`;
-  link.removeAttribute('aria-disabled');
-}
 function scoreName(score) { if (score >= 75) return 'فرصت خوب'; if (score >= 65) return 'خوش‌قیمت'; return 'نزدیک بازار'; }
 function listingCard(item, index) {
   const isLocked = !state.unlocked && index >= state.freeLimit;
@@ -138,10 +123,8 @@ function applyFilters() {
 }
 
 renderListings();
-updateDivarSearch();
-document.getElementById('filter-form').addEventListener('submit', event => { event.preventDefault(); applyFilters(); updateDivarSearch(); document.getElementById('opportunities').scrollIntoView({behavior:'smooth', block:'start'}); });
-document.getElementById('city').addEventListener('change', updateDivarSearch);
-document.getElementById('reset-filters').addEventListener('click', () => { document.getElementById('filter-form').reset(); applyFilters(); updateDivarSearch(); });
+document.getElementById('filter-form').addEventListener('submit', event => { event.preventDefault(); applyFilters(); document.getElementById('opportunities').scrollIntoView({behavior:'smooth', block:'start'}); });
+document.getElementById('reset-filters').addEventListener('click', () => { document.getElementById('filter-form').reset(); applyFilters(); });
 
 // Anchor-like controls used throughout the landing page.
 document.addEventListener('click', event => {
