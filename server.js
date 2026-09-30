@@ -18,7 +18,7 @@ function searchFilters(query) {
   const budget = String(query.budget || '')
   const directNumber = value => /^\d+$/.test(String(value || '')) ? Number(value) : undefined
   const brand = String(query.brand || '').trim()
-  const freeQuery = String(query.query || '').trim()
+  const freeQuery = [query.model, query.query].map(value=>String(value||'').trim()).filter(Boolean).join(' ')
   return {
     city: /^[a-z0-9-]{1,40}$/.test(String(query.city || '')) ? String(query.city) : undefined,
     cityIds: /^\d+(,\d+)*$/.test(String(query.city || '')) ? String(query.city).split(',') : undefined,
