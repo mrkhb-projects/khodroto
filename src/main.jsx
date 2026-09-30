@@ -11,6 +11,7 @@ import './pages.css'
 import './motion.css'
 import './search.css'
 import './info-pages.css'
+import './admin-integrations.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)

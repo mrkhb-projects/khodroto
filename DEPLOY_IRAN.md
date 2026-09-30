@@ -35,6 +35,8 @@ DIVAR_HARD_MAX_PAGES=500
 DIVAR_CACHE_TTL_MINUTES=10
 DATABASE_FILE=data/khodroto.db
 ADMIN_PHONE=09xxxxxxxxx
+# حداقل ۳۲ کاراکتر تصادفی؛ پس از ذخیره اعتبارنامه‌ها تغییر ندهید.
+CREDENTIALS_ENCRYPTION_KEY=replace-with-a-long-random-secret
 ```
 
 سپس:
@@ -66,7 +68,9 @@ sudo certbot --nginx -d example.ir -d www.example.ir
 
 ## پیامک و پرداخت
 
-در Preview، OTP و پرداخت در حالت Sandbox هستند. برای Production باید adapter شرکت پیامک و درگاه انتخابی به endpointهای آماده متصل شود. رازها را فقط در `.env` یا Secret Manager قرار دهید و وارد Git نکنید.
+در بخش تنظیمات مدیریت می‌توان هر تعداد درگاه پرداخت و پنل پیامکی را ثبت، ویرایش، اولویت‌بندی و به‌صورت هم‌زمان فعال کرد. اطلاعات محرمانه در پاسخ API برگردانده نمی‌شوند و با AES-256-GCM در SQLite رمز می‌شوند. متغیر `CREDENTIALS_ENCRYPTION_KEY` را پیش از ثبت اولین اتصال تنظیم و سپس در Secret Manager یا نسخه پشتیبان امن نگهداری کنید؛ تغییر یا گم‌شدن آن باعث غیرقابل‌خواندن‌شدن کلیدهای ذخیره‌شده می‌شود.
+
+درگاه‌های فعال در صفحه خرید به کاربر پیشنهاد می‌شوند. برای ارسال واقعی OTP یا انتقال واقعی پرداخت، adapter سمت سرور ارائه‌دهنده انتخابی باید به API همان شرکت متصل شود؛ تا پیش از آن Preview در حالت Sandbox باقی می‌ماند. رازها را در Git، فرانت‌اند یا لاگ قرار ندهید.
 
 ## بکاپ
 

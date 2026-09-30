@@ -77,4 +77,22 @@ describe('listing lifecycle', () => {
       activeListings: 1,
     })
   })
+
+  it('stores unlimited active payment and SMS integrations without exposing secrets', () => {
+    const store = database()
+    store.saveIntegration('payment', { name: 'درگاه اصلی', provider: 'zarinpal', secret: 'merchant-secret', enabled: true, priority: 1, config: { merchantId: 'm-1' } })
+    store.saveIntegration('payment', { name: 'درگاه پشتیبان', provider: 'idpay', secret: 'backup-secret', enabled: true, priority: 2, config: { merchantId: 'm-2' } })
+    store.saveIntegration('sms', { name: 'پیامک تراکنشی', provider: 'kavenegar', secret: 'sms-secret', enabled: true, priority: 1, config: { sender: '1000' } })
+
+    const payments = store.integrations('payment')
+    expect(payments).toHaveLength(2)
+    expect(payments.every(entry => entry.enabled && entry.hasSecret && !entry.secret && !entry.secret_enc)).toBe(true)
+    expect(store.activeIntegrations('payment').map(entry => entry.secret)).toEqual(['merchant-secret', 'backup-secret'])
+    expect(store.activeIntegrations('sms')[0].secret).toBe('sms-secret')
+    expect(store.stats()).toMatchObject({ paymentGateways: 2, smsProviders: 1 })
+
+    store.saveIntegration('payment', { ...payments[0], secret: '', enabled: false }, payments[0].id)
+    expect(store.integrations('payment').filter(entry => entry.enabled)).toHaveLength(1)
+    expect(store.activeIntegrations('payment')[0].secret).toBe('backup-secret')
+  })
 })
