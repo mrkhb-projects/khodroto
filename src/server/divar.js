@@ -225,7 +225,7 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
   const ranked = rankListings(filtered)
   const selected = ranked.slice(0, 6)
   const enriched = await Promise.all(selected.map(item => enrichKenarItem(item, apiKey, fetchImpl)))
-  return { source: 'kenar', items: enriched, totalAnalyzed: normalized.length, updatedAt: new Date().toISOString() }
+  return { source: 'kenar', category: filters.category || env.DIVAR_CATEGORY || 'light', items: enriched, observedTokens: normalized.map(item => item.id), totalAnalyzed: normalized.length, fullSnapshot: false, updatedAt: new Date().toISOString() }
 }
 
 export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
@@ -291,7 +291,7 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   const items = finalAnalysis.items
   if (filters.sort === 'cheap') items.sort((a,b)=>a.price-b.price)
   if (filters.sort === 'expensive') items.sort((a,b)=>b.price-a.price)
-  return { source: 'divar-web', items, totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, pagesFetched, truncated: hasNextPage, updatedAt: new Date().toISOString() }
+  return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, pagesFetched, truncated: hasNextPage, fullSnapshot: !hasNextPage && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
 }
 
 export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null } = {}) {
@@ -335,6 +335,21 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     return request
   }
 
+  async function verifyListing(token) {
+    if (!token || provider === 'none') return 'unknown'
+    const url = provider === 'kenar'
+      ? `${KENAR_BASE_URL}/v1/open-platform/finder/post/${encodeURIComponent(token)}`
+      : `${webApiBase(env)}/v8/posts-v2/web/${encodeURIComponent(token)}`
+    const headers = provider === 'kenar' ? { 'x-api-key': env.KENAR_API_KEY, accept: 'application/json' } : webHeaders()
+    try {
+      await jsonRequest(url, { method: 'GET', provider, headers }, fetchImpl)
+      return 'active'
+    } catch (error) {
+      if (error instanceof DivarUpstreamError && [404, 410].includes(error.status)) return 'removed'
+      return 'unknown'
+    }
+  }
+
   async function listings(filters = {}) {
     await hydrateCache()
     const key = JSON.stringify(filters)
@@ -350,6 +365,7 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
   return {
     listings,
     refresh,
+    verifyListing,
     status: () => ({ configured: provider !== 'none', provider, official: provider === 'kenar', cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, refreshing: inflight.size > 0 }),
   }
 }

@@ -13,6 +13,18 @@ const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split('
 const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
 const adminOnly=(req,res,next)=>requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
 
+async function persistCrawl(result, { verifyMissing = true } = {}) {
+  const category = result.category || 'light'
+  const reconciliation = Boolean(result.fullSnapshot && !result.cached)
+  store.storeCrawl(result, { category, scope: result.scope, reconcile: reconciliation })
+  if (!reconciliation || !verifyMissing) return
+  const candidates = store.verificationCandidates(category, 25)
+  for (const candidate of candidates) {
+    const state = await divar.verifyListing(candidate.token)
+    if (state !== 'unknown') store.markListingVerification(candidate.token, state)
+  }
+}
+
 app.disable('x-powered-by')
 app.use(express.json({ limit: '20kb' }))
 
@@ -74,7 +86,7 @@ app.patch('/api/admin/tickets/:id',adminOnly,(req,res)=>{const status=['open','p
 app.get('/api/admin/listings',adminOnly,(_req,res)=>res.json({items:store.adminListings()}))
 app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
 app.patch('/api/admin/settings',adminOnly,(req,res)=>res.json({settings:store.updateSettings(req.body||{})}))
-app.post('/api/admin/crawler/refresh',adminOnly,async(_req,res)=>{try{const result=await divar.refresh({});store.storeListings(result.items);res.json({ok:true,total:result.totalAnalyzed,pages:result.pagesFetched})}catch(error){res.status(502).json({error:error.code||'CRAWLER_ERROR'})}})
+app.post('/api/admin/crawler/refresh',adminOnly,async(_req,res)=>{try{const result=await divar.refresh({});await persistCrawl(result);res.json({ok:true,total:result.totalAnalyzed,pages:result.pagesFetched,reconciled:Boolean(result.fullSnapshot)})}catch(error){res.status(502).json({error:error.code||'CRAWLER_ERROR'})}})
 
 app.get('/api/integration/status', (_req, res) => {
   const status = divar.status()
@@ -84,12 +96,14 @@ app.get('/api/integration/status', (_req, res) => {
 app.get('/api/listings', async (req, res) => {
   try {
     const result = await divar.listings(searchFilters(req.query))
+    if (!result.cached) await persistCrawl(result)
+    const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
     const filtered = String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
     const offset = Math.max(0, Number(req.query.offset) || 0)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...result, items: filtered.slice(offset, offset + limit), totalMatches: filtered.length, offset, limit, integration: divar.status() })
+    res.json({ ...publicResult, items: filtered.slice(offset, offset + limit), totalMatches: filtered.length, offset, limit, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
@@ -107,7 +121,7 @@ app.get('/api/listings', async (req, res) => {
 
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
-const warmMarketCache = () => divar.refresh({}).then(result => {store.storeListings(result.items);console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)}).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+const warmMarketCache = () => divar.refresh({}).then(async result => {await persistCrawl(result);console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)} ).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
 warmMarketCache()
 setInterval(warmMarketCache, cacheTtl).unref()
 

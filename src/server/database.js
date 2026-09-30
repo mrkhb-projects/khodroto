@@ -10,7 +10,7 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,phone TEXT UNIQUE NOT NULL,name TEXT DEFAULT 'کاربر خودروتو',city TEXT DEFAULT '1',role TEXT DEFAULT 'user',created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS otp_codes(phone TEXT PRIMARY KEY,code_hash TEXT NOT NULL,expires_at INTEGER NOT NULL,attempts INTEGER DEFAULT 0);
  CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,expires_at INTEGER NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
- CREATE TABLE IF NOT EXISTS listings(token TEXT PRIMARY KEY,title TEXT,city TEXT,price INTEGER,market INTEGER,score INTEGER,payload TEXT,first_seen_at TEXT,last_seen_at TEXT);
+ CREATE TABLE IF NOT EXISTS listings(token TEXT PRIMARY KEY,title TEXT,city TEXT,price INTEGER,market INTEGER,score INTEGER,payload TEXT,first_seen_at TEXT,last_seen_at TEXT,category TEXT DEFAULT 'light',crawl_scope TEXT DEFAULT 'web:light:1',status TEXT DEFAULT 'active',missing_count INTEGER DEFAULT 0,last_verified_at TEXT,inactive_at TEXT,removed_at TEXT);
  CREATE TABLE IF NOT EXISTS price_history(id INTEGER PRIMARY KEY,token TEXT NOT NULL,price INTEGER NOT NULL,recorded_at TEXT NOT NULL,UNIQUE(token,price,recorded_at));
  CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,title TEXT NOT NULL,filters TEXT NOT NULL,enabled INTEGER DEFAULT 1,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS saved_searches(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,title TEXT NOT NULL,filters TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
@@ -18,24 +18,50 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  CREATE TABLE IF NOT EXISTS tickets(id INTEGER PRIMARY KEY,user_id INTEGER,subject TEXT NOT NULL,message TEXT NOT NULL,status TEXT DEFAULT 'open',created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS crawler_runs(id INTEGER PRIMARY KEY,source TEXT,status TEXT,items_count INTEGER DEFAULT 0,pages_count INTEGER DEFAULT 0,error TEXT,started_at TEXT,finished_at TEXT);
  CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL);`)
+ const listingColumns=new Set(db.prepare('PRAGMA table_info(listings)').all().map(column=>column.name));
+ const listingMigrations={category:"TEXT DEFAULT 'light'",crawl_scope:"TEXT DEFAULT 'web:light:1'",status:"TEXT DEFAULT 'active'",missing_count:'INTEGER DEFAULT 0',last_verified_at:'TEXT',inactive_at:'TEXT',removed_at:'TEXT'};
+ for(const [column,type] of Object.entries(listingMigrations))if(!listingColumns.has(column))db.exec(`ALTER TABLE listings ADD COLUMN ${column} ${type}`)
+ db.exec("UPDATE listings SET category=COALESCE(category,'light'),crawl_scope=COALESCE(crawl_scope,'web:'||COALESCE(category,'light')||':1'),status=COALESCE(status,'active'),missing_count=COALESCE(missing_count,0)")
  const defaults={site_name:'خودروتو',site_tagline:'ماشین خوب، قیمت درست',support_phone:'',support_email:'',free_results:'6',cache_minutes:'10',maintenance_mode:'false'};const settingInsert=db.prepare('INSERT OR IGNORE INTO settings(key,value,updated_at) VALUES(?,?,?)');for(const [key,value]of Object.entries(defaults))settingInsert.run(key,value,now())
  const hash=v=>crypto.createHash('sha256').update(v).digest('hex')
- function storeListings(items=[]){const up=db.prepare(`INSERT INTO listings(token,title,city,price,market,score,payload,first_seen_at,last_seen_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(token) DO UPDATE SET title=excluded.title,city=excluded.city,price=excluded.price,market=excluded.market,score=excluded.score,payload=excluded.payload,last_seen_at=excluded.last_seen_at`),hist=db.prepare('INSERT OR IGNORE INTO price_history(token,price,recorded_at) VALUES(?,?,?)'),stamp=now();db.exec('BEGIN');try{for(const item of items){up.run(item.id,item.title,item.city,item.price,item.market,item.score,json(item),stamp,stamp);hist.run(item.id,item.price,stamp.slice(0,16))}db.exec('COMMIT')}catch(e){db.exec('ROLLBACK');throw e}}
+ function storeCrawl(result={},options={}){
+  const items=Array.isArray(result.items)?result.items:[],category=String(options.category||result.category||'light'),scope=String(options.scope||result.scope||`web:${category}:1`),stamp=now()
+  const observed=[...new Set((result.observedTokens||items.map(item=>item.id)).filter(Boolean).map(String))]
+  const up=db.prepare(`INSERT INTO listings(token,title,city,price,market,score,payload,first_seen_at,last_seen_at,category,crawl_scope,status,missing_count,last_verified_at,inactive_at,removed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',0,?,NULL,NULL) ON CONFLICT(token) DO UPDATE SET title=excluded.title,city=excluded.city,price=excluded.price,market=excluded.market,score=excluded.score,payload=excluded.payload,last_seen_at=excluded.last_seen_at,category=excluded.category,crawl_scope=excluded.crawl_scope,status='active',missing_count=0,last_verified_at=excluded.last_verified_at,inactive_at=NULL,removed_at=NULL`)
+  const hist=db.prepare('INSERT OR IGNORE INTO price_history(token,price,recorded_at) VALUES(?,?,?)')
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS crawl_seen_tokens(token TEXT PRIMARY KEY)')
+  const seen=db.prepare('INSERT OR IGNORE INTO crawl_seen_tokens(token) VALUES(?)')
+  db.exec('BEGIN')
+  try{
+   db.exec('CREATE TEMP TABLE IF NOT EXISTS crawl_seen_tokens(token TEXT PRIMARY KEY);DELETE FROM crawl_seen_tokens;')
+   for(const token of observed)seen.run(token)
+   for(const item of items){if(!item?.id)continue;up.run(item.id,item.title,item.city,item.price,item.market,item.score,json(item),stamp,stamp,category,scope,stamp);hist.run(item.id,item.price,stamp.slice(0,16))}
+   db.prepare(`UPDATE listings SET last_seen_at=?,last_verified_at=?,missing_count=0,status='active',inactive_at=NULL,removed_at=NULL WHERE token IN (SELECT token FROM crawl_seen_tokens)`).run(stamp,stamp)
+   if(options.reconcile){
+    db.prepare(`UPDATE listings SET missing_count=missing_count+1,status=CASE WHEN missing_count+1>=3 THEN 'inactive' ELSE 'stale' END,inactive_at=CASE WHEN missing_count+1>=3 THEN COALESCE(inactive_at,?) ELSE inactive_at END WHERE crawl_scope=? AND status!='removed' AND token NOT IN (SELECT token FROM crawl_seen_tokens)`).run(stamp,scope)
+   }
+   db.exec('COMMIT')
+  }catch(e){db.exec('ROLLBACK');throw e}
+  return{stored:items.length,observed:observed.length,reconciled:Boolean(options.reconcile)}
+ }
+ function storeListings(items=[]){return storeCrawl({items},{reconcile:false})}
+ function verificationCandidates(category='light',limit=25){return db.prepare(`SELECT token,status,missing_count FROM listings WHERE category=? AND status IN ('stale','inactive') ORDER BY missing_count DESC,last_seen_at ASC LIMIT ?`).all(category,limit)}
+ function markListingVerification(token,state){const stamp=now();if(state==='removed')return db.prepare(`UPDATE listings SET status='removed',removed_at=COALESCE(removed_at,?),last_verified_at=? WHERE token=?`).run(stamp,stamp,token);if(state==='active')return db.prepare(`UPDATE listings SET status='active',missing_count=0,last_seen_at=?,last_verified_at=?,inactive_at=NULL,removed_at=NULL WHERE token=?`).run(stamp,stamp,token)}
  function requestOtp(phone){const code=String(Math.floor(10000+Math.random()*90000));db.prepare('INSERT INTO otp_codes(phone,code_hash,expires_at,attempts) VALUES(?,?,?,0) ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0').run(phone,hash(code),Date.now()+120000);return code}
  function verifyOtp(phone,code){const row=db.prepare('SELECT * FROM otp_codes WHERE phone=?').get(phone);if(!row||row.expires_at<Date.now()||row.attempts>=5)return null;if(row.code_hash!==hash(code)){db.prepare('UPDATE otp_codes SET attempts=attempts+1 WHERE phone=?').run(phone);return null}db.prepare('DELETE FROM otp_codes WHERE phone=?').run(phone);db.prepare('INSERT OR IGNORE INTO users(phone,created_at) VALUES(?,?)').run(phone,now());if(process.env.ADMIN_PHONE===phone||process.env.NODE_ENV!=='production')db.prepare("UPDATE users SET role='admin' WHERE phone=?").run(phone);const user=db.prepare('SELECT * FROM users WHERE phone=?').get(phone),token=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(hash(token),user.id,Date.now()+30*86400000,now());return{user,token}}
  function userFromToken(token){if(!token)return null;return db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hash(token),Date.now())||null}
- return{db,storeListings,requestOtp,verifyOtp,userFromToken,
+ return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,requestOtp,verifyOtp,userFromToken,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),
- stats:()=>({listings:db.prepare('SELECT COUNT(*) n FROM listings').get().n,users:db.prepare('SELECT COUNT(*) n FROM users').get().n,alerts:db.prepare('SELECT COUNT(*) n FROM alerts WHERE enabled=1').get().n,subscriptions:db.prepare("SELECT COUNT(*) n FROM subscriptions WHERE status='active'").get().n,tickets:db.prepare("SELECT COUNT(*) n FROM tickets WHERE status='open'").get().n}),
+ stats:()=>({listings:db.prepare('SELECT COUNT(*) n FROM listings').get().n,activeListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active'").get().n,staleListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='stale'").get().n,inactiveListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='inactive'").get().n,removedListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='removed'").get().n,users:db.prepare('SELECT COUNT(*) n FROM users').get().n,alerts:db.prepare('SELECT COUNT(*) n FROM alerts WHERE enabled=1').get().n,subscriptions:db.prepare("SELECT COUNT(*) n FROM subscriptions WHERE status='active'").get().n,tickets:db.prepare("SELECT COUNT(*) n FROM tickets WHERE status='open'").get().n}),
  createAlert:(uid,b)=>db.prepare('INSERT INTO alerts(user_id,title,filters,created_at) VALUES(?,?,?,?)').run(uid,b.title,json(b.filters),now()),alerts:uid=>db.prepare('SELECT * FROM alerts WHERE user_id=? ORDER BY id DESC').all(uid),toggleAlert:(uid,id,en)=>db.prepare('UPDATE alerts SET enabled=? WHERE id=? AND user_id=?').run(en?1:0,id,uid),
  createTicket:(uid,b)=>db.prepare('INSERT INTO tickets(user_id,subject,message,created_at) VALUES(?,?,?,?)').run(uid,b.subject,b.message,now()),
  subscribe:(uid,plan,amount)=>{const start=new Date(),end=new Date(Date.now()+30*86400000);db.prepare("UPDATE subscriptions SET status='expired' WHERE user_id=? AND status='active'").run(uid);db.prepare('INSERT INTO subscriptions(user_id,plan,status,amount,started_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?)').run(uid,plan,'active',amount,start.toISOString(),end.toISOString(),now());return{plan,status:'active',expiresAt:end.toISOString()}},subscription:uid=>db.prepare("SELECT * FROM subscriptions WHERE user_id=? ORDER BY id DESC LIMIT 1").get(uid),
  adminUsers:()=>db.prepare(`SELECT u.id,u.phone,u.name,u.city,u.role,u.created_at,(SELECT plan FROM subscriptions s WHERE s.user_id=u.id AND s.status='active' ORDER BY id DESC LIMIT 1) plan FROM users u ORDER BY u.id DESC LIMIT 200`).all(),
  adminSubscriptions:()=>db.prepare('SELECT s.*,u.phone,u.name FROM subscriptions s JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 200').all(),
  adminTickets:()=>db.prepare('SELECT t.*,u.phone,u.name FROM tickets t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 200').all(),
- adminListings:()=>db.prepare('SELECT token,title,city,price,score,first_seen_at,last_seen_at FROM listings ORDER BY last_seen_at DESC LIMIT 200').all(),
+ adminListings:()=>db.prepare('SELECT token,title,city,price,score,category,crawl_scope,status,missing_count,first_seen_at,last_seen_at,last_verified_at,inactive_at,removed_at FROM listings ORDER BY last_seen_at DESC LIMIT 200').all(),
  setUserRole:(id,role)=>db.prepare('UPDATE users SET role=? WHERE id=?').run(role,id),
  setTicketStatus:(id,status)=>db.prepare('UPDATE tickets SET status=? WHERE id=?').run(status,id),
  settings:()=>Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map(x=>[x.key,x.value])),

@@ -57,6 +57,12 @@ describe('Divar integration', () => {
     expect(calls.some(call => call.url.includes('/v8/posts-v2/web/token-0'))).toBe(true)
   })
 
+  it('confirms a listing removed only on a 404 or 410 detail response', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 404, json: async () => ({}) })
+    const service = createDivarService({ env: { DIVAR_PROVIDER: 'web' }, fetchImpl })
+    expect(await service.verifyListing('deleted-token')).toBe('removed')
+  })
+
   it('deduplicates and caches identical searches', async () => {
     let requests = 0
     const fetchImpl = async (_url, options) => {
