@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import { CarsPage, DashboardPage, PricingPage } from './pages'
 import { AdminPage } from './admin'
 import { faqItems, InfoPage, infoPaths, NotFoundPage } from './info-pages'
-import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
+import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, Gauge, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
 import './styles.css'
 import './pages.css'
@@ -15,10 +15,13 @@ import './admin-integrations.css'
 import './admin-console.css'
 import './slider.css'
 import './home-refinements.css'
+import './responsive-refinements.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
 const scoreStyle = score => ({'--score-color':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},65%,40%)`,'--score-soft':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},70%,94%)`})
+const cardStyleFor=(car,settings={})=>car.suspicious?settings.card_suspicious||'6':car.score>=85?settings.card_golden||'1':car.score>=70?settings.card_good||'2':car.score>=50?settings.card_fair||'4':settings.card_expensive||'5'
+const tickerItems=value=>String(value||'').split('\n').map(line=>{const[title,subtitle,score]=line.split('|').map(part=>part?.trim());return{title,subtitle,score}}).filter(item=>item.title&&item.subtitle)
 
 function Brand(){ return <a className="brand" href="/" aria-label="خودروتو"><img className="brand-logo" src="/brand/khodroto-mark.svg" alt=""/><strong>خودروتو</strong></a> }
 
@@ -31,18 +34,18 @@ function Header({onLogin}){
   </nav><div className="nav-actions"><button className="login" onClick={onLogin}>ورود</button><a className="primary small" href="/cars">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
 }
 
-function Hero({stats}){ const values=stats||{analyzedToday:0,totalListings:0,goldenOpportunities:0}; return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
+function Hero({stats,settings}){ const values=stats||{analyzedToday:0,totalListings:0,goldenOpportunities:0},items=tickerItems(settings?.hero_ticker),fallback=[{title:'فرصت تازه پیدا شد',subtitle:'پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار',score:'۹۱'}],[ticker,setTicker]=useState(0),notices=items.length?items:fallback;useEffect(()=>{if(notices.length<2)return;const timer=setInterval(()=>setTicker(index=>(index+1)%notices.length),3800);return()=>clearInterval(timer)},[notices.length]);const notice=notices[ticker%notices.length];return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
   <div className="eyebrow"><Sparkles size={15}/> تحلیل هوشمند آگهی‌های خودرو</div>
   <h1>ماشین خوب را<br/><em>قبل از بقیه</em> پیدا کن.</h1>
   <p>خودروتو آگهی‌های دیوار را بررسی می‌کند، قیمت هر خودرو را با نمونه‌های مشابه می‌سنجد و فرصت‌های واقعی را برایت جدا می‌کند.</p>
   <div className="hero-actions"><a className="primary" href="#search">دیدن فرصت‌های امروز <ArrowLeft size={18}/></a><a href="#method" className="text-link">خودروتو چطور کار می‌کند؟</a></div>
   <div className="trust"><span><Check/> بدون آگهی تکراری</span><span><Check/> قیمت‌گذاری شفاف</span><span><Check/> لینک مستقیم به دیوار</span></div>
   </section><section className="hero-visual"><div className="hero-image"><img src="/khodroto-market-banner.jpg" alt="مجموعه خودروهای منتخب خودروتو"/>
-  <div className="floating-card"><span className="pulse"/><div><b>فرصت تازه پیدا شد</b><small>پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار</small></div><strong>۹۱</strong></div>
+  <div className="floating-card ticker-card" key={ticker}><span className="pulse"/><div><b>{notice.title}</b><small>{notice.subtitle}</small></div><strong>{notice.score||'—'}</strong></div>
   <div className="image-stat"><small>آمار زنده خودروتو</small><div><b>{num(values.analyzedToday)}</b><span>بررسی‌شده امروز</span></div><div><b>{num(values.totalListings)}</b><span>کل آگهی‌های پلتفرم</span></div><div className="golden"><b>{num(values.goldenOpportunities)}</b><span>فرصت خرید طلایی</span></div></div></div></section>
   </div></main> }
 
-function MarketSlider(){const[slides,setSlides]=useState([]),[active,setActive]=useState(0);useEffect(()=>{fetch('/api/content/slides').then(r=>r.json()).then(data=>setSlides(data.items||[])).catch(()=>{})},[]);useEffect(()=>{if(slides.length<2)return;const timer=window.setInterval(()=>setActive(index=>(index+1)%slides.length),6500);return()=>window.clearInterval(timer)},[slides.length]);if(!slides.length)return null;return <section className="market-slider-wrap"><div className="wrap"><div className="market-slider">{slides.map((slide,index)=><article key={slide.id} className={`${index===active?'active':''} theme-${slide.theme}`} style={{backgroundImage:`linear-gradient(90deg,rgba(7,18,34,.08),rgba(7,18,34,.92)),url(${slide.image})`}}><div><span><Sparkles/>{slide.badge}</span><h2>{slide.title}</h2><p>{slide.subtitle}</p><a className="primary" href={slide.cta_link||'/cars'}>{slide.cta_text||'مشاهده'} <ArrowLeft/></a></div></article>)}<div className="slider-controls"><button onClick={()=>setActive(index=>(index-1+slides.length)%slides.length)} aria-label="اسلاید قبلی">‹</button><div>{slides.map((slide,index)=><button key={slide.id} className={index===active?'active':''} onClick={()=>setActive(index)} aria-label={`اسلاید ${index+1}`}/>)}</div><button onClick={()=>setActive(index=>(index+1)%slides.length)} aria-label="اسلاید بعدی">›</button></div></div></div></section>}
+function MarketSlider(){const[slides,setSlides]=useState([]),[active,setActive]=useState(0);useEffect(()=>{fetch('/api/content/slides').then(r=>r.json()).then(data=>setSlides(data.items||[])).catch(()=>{})},[]);useEffect(()=>{if(slides.length<2)return;const timer=window.setInterval(()=>setActive(index=>(index+1)%slides.length),6500);return()=>window.clearInterval(timer)},[slides.length]);if(!slides.length)return null;return <section className="market-slider-wrap"><div className="wrap"><div className="market-slider">{slides.map((slide,index)=><article key={slide.id} className={`${index===active?'active':''} theme-${slide.theme}`} style={{backgroundImage:`linear-gradient(90deg,rgba(7,18,34,.08),rgba(7,18,34,.92)),url(${slide.image})`}}><div><span><Sparkles/>{slide.badge}</span><h2>{slide.title}</h2><p>{slide.subtitle}</p><a className="primary" href={slide.cta_link||'/cars'}>{slide.cta_text||'مشاهده'} <ArrowLeft/></a></div></article>)}<div className="slider-controls"><button onClick={()=>setActive(index=>(index-1+slides.length)%slides.length)} aria-label="اسلاید قبلی"><ChevronLeft/></button><div>{slides.map((slide,index)=><button key={slide.id} className={index===active?'active':''} onClick={()=>setActive(index)} aria-label={`اسلاید ${index+1}`}/>)}</div><button onClick={()=>setActive(index=>(index+1)%slides.length)} aria-label="اسلاید بعدی"><ChevronRight/></button></div></div></div></section>}
 
 function SearchPanel({onSearch}){
  const initial={category:'light',city:'1',brand:'همه برندها',model:'',query:'',budget:'همه قیمت‌ها',year:'همه سال‌ها',maxUsage:'',gearbox:'',body:''}
@@ -54,11 +57,11 @@ function SearchPanel({onSearch}){
  return <section id="search" className="search-wrap"><div className="wrap"><div className="search-panel rich-search"><div className="search-heading"><div className="search-icon"><Search/></div><div><b>دنبال چه خودرویی هستی؟</b><span>جست‌وجوی دقیق میان آگهی‌های خودرو؛ همه انتخاب‌ها اختیاری‌اند</span></div><a href="/cars">جست‌وجوی حرفه‌ای <ArrowLeft/></a></div><div className="vehicle-type-tabs">{[['light','خودرو'],['motorcycles','موتورسیکلت'],['heavy','خودرو سنگین']].map(([id,label])=><button key={id} className={form.category===id?'active':''} onClick={()=>setForm({...form,category:id,brand:'همه برندها',model:''})}>{label}</button>)}</div><div className="fields main-fields"><SelectField label="شهر" name="city" options={[["1","تهران"],["2","کرج"],["3","مشهد"],["4","اصفهان"],["6","شیراز"],["8","تبریز"],["5","رشت"],["10","قم"]]}/><SelectField label="برند" name="brand" change={value=>setForm({...form,brand:value,model:''})} options={brandOptions}/><SelectField label="مدل خودرو" name="model" options={[["",form.brand==='همه برندها'?'همه مدل‌ها':'انتخاب مدل'],...(models[form.brand]||[])]}/><SelectField label="بازه قیمت" name="budget" options={['همه قیمت‌ها','تا ۵۰۰ میلیون','تا ۷۰۰ میلیون','۷۰۰ میلیون تا ۱.۲ میلیارد','۱.۲ تا ۲ میلیارد','بیشتر از ۲ میلیارد']}/><SelectField label="سال ساخت" name="year" options={['همه سال‌ها','۱۴۰۳ به بالا','۱۴۰۰ تا ۱۴۰۲','۱۳۹۵ تا ۱۳۹۹','پیش از ۱۳۹۵']}/><button onClick={()=>onSearch(form)} className="primary search-button">نمایش فرصت‌ها <Search size={18}/></button></div><button className={'advanced-toggle '+(advanced?'open':'')} onClick={()=>setAdvanced(!advanced)}><SlidersHorizontal size={16}/>{advanced?'بستن فیلترهای تکمیلی':'فیلترهای تکمیلی خودرو'}<ChevronDown size={16}/></button>{advanced&&<div className="advanced-fields"><label><span>عبارت جست‌وجوی آزاد</span><div className="search-text-field"><input value={form.query} onChange={e=>set('query',e.target.value)} placeholder="مثلاً پانوراما، کم‌کارکرد یا فول"/><Search/></div></label><SelectField label="حداکثر کارکرد" name="maxUsage" options={[["","همه کارکردها"],'۲۰٬۰۰۰','۵۰٬۰۰۰','۸۰٬۰۰۰','۱۲۰٬۰۰۰','۲۰۰٬۰۰۰']}/><SelectField label="نوع گیربکس" name="gearbox" options={[["","همه گیربکس‌ها"],'دنده‌ای','اتوماتیک']}/><SelectField label="وضعیت بدنه" name="body" options={[["","همه وضعیت‌ها"],'بدون رنگ','یک لکه رنگ','چند لکه رنگ','تصادفی']}/><button className="clear-search" onClick={()=>setForm(initial)}><X size={14}/> پاک‌کردن فیلترها</button></div>}</div></div></section>
 }
 
-function CarCard({car,index,onToast}){
+function CarCard({car,index,onToast,settings}){
  const storageKey=`khodroto:saved:${car.id}`
  const [saved,setSaved]=useState(()=>localStorage.getItem(storageKey)!==null)
  function toggleSaved(){const next=!saved;setSaved(next);if(next)localStorage.setItem(storageKey,JSON.stringify(car));else localStorage.removeItem(storageKey);onToast(next?'آگهی در علاقه‌مندی‌ها ذخیره شد.':'آگهی از علاقه‌مندی‌ها حذف شد.')}
- return <article className="car-card">
+ return <article className={`car-card card-style-${cardStyleFor(car,settings)}`}>
  <div className="car-img"><img src={car.image || '/khodroto-hero.jpg'} style={{objectPosition:car.imagePos || 'center'}} alt={car.title}/><span className="time">{car.freshness}</span><button className={saved?'saved':''} onClick={toggleSaved} aria-label={saved?'حذف از ذخیره‌ها':'ذخیره آگهی'}><Heart fill={saved?'currentColor':'none'}/></button></div>
  <div className="car-body"><div className="card-top"><div><span className="place">{car.city}</span><h3>{car.title}</h3></div><div style={scoreStyle(car.score)} className={'score '+(car.suspicious?'suspicious':'')}><b>{num(car.score)}</b><span>{car.suspicious?'مشکوک':car.label||'امتیاز تحلیل'}</span></div></div>
  <div className="specs"><span>مدل {num(car.year)}</span><i/><span>{num(car.km)} کیلومتر</span><i/><span>{car.color}</span></div>
@@ -68,7 +71,7 @@ function CarCard({car,index,onToast}){
  <a className="divar-link" href={car.link} target="_blank" rel="noreferrer">مشاهده آگهی در دیوار <ArrowUpLeft/></a>
  </div></article> }
 
-function Opportunities({cars,status,notice,loading,total,onLoadMore,onToast}){const live=['kenar','divar-web'].includes(status),hasMore=cars.length<total;return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>{num(total)} فرصت از میان آگهی‌های کش‌شده و تحلیل‌شده.</p></div><div className={'live '+(live?'':'demo')}><span/>{loading?'در حال دریافت آگهی‌ها…':status==='kenar'?'متصل به API رسمی کنار دیوار':status==='divar-web'?'متصل مستقیم به آگهی‌های دیوار':'نسخه نمایشی با داده نمونه'}</div></div>{notice&&<div className="data-notice">{notice}</div>}<div className="cards">{cars.map((c,i)=><CarCard car={c} index={i} key={c.id} onToast={onToast}/>)}</div>{!cars.length&&<div className="empty">با این فیلتر فرصتی پیدا نشد؛ محدوده جست‌وجو را تغییر بده.</div>}<div className="all">{hasMore?<button className="secondary" onClick={onLoadMore} disabled={loading}>{loading?'در حال دریافت…':'مشاهده فرصت‌های بیشتر'} <ArrowLeft/></button>:cars.length>6&&<span className="all-loaded"><Check/> همه نتایج موجود نمایش داده شد</span>}<p>{live?'کش بازار هر ۱۰ دقیقه در پس‌زمینه به‌روزرسانی می‌شود':'اتصال سرور به دیوار برقرار نشد؛ داده نمونه نمایش داده شده است'}</p></div></div></section>}
+function Opportunities({cars,status,notice,loading,total,onLoadMore,onToast,settings}){const live=['kenar','divar-web'].includes(status),hasMore=cars.length<total;return <section id="opportunities" className="opps"><div className="wrap"><div className="section-head"><div><span className="kicker">فرصت‌های امروز</span><h2>ارزشمندترین‌ها، همین حالا</h2><p>{num(total)} فرصت از میان آگهی‌های کش‌شده و تحلیل‌شده.</p></div><div className={'live '+(live?'':'demo')}><span/>{loading?'در حال دریافت آگهی‌ها…':status==='kenar'?'متصل به API رسمی کنار دیوار':status==='divar-web'?'متصل مستقیم به آگهی‌های دیوار':'نسخه نمایشی با داده نمونه'}</div></div>{notice&&<div className="data-notice">{notice}</div>}<div className={`cards mobile-${settings?.mobile_listing_mode||'carousel'}`}>{cars.map((c,i)=><CarCard car={c} index={i} key={c.id} onToast={onToast} settings={settings}/>)}</div>{!cars.length&&<div className="empty">با این فیلتر فرصتی پیدا نشد؛ محدوده جست‌وجو را تغییر بده.</div>}<div className="all">{hasMore?<button className="secondary" onClick={onLoadMore} disabled={loading}>{loading?'در حال دریافت…':'مشاهده فرصت‌های بیشتر'} <ArrowLeft/></button>:cars.length>6&&<span className="all-loaded"><Check/> همه نتایج موجود نمایش داده شد</span>}<p>{live?'کش بازار هر ۱۰ دقیقه در پس‌زمینه به‌روزرسانی می‌شود':'اتصال سرور به دیوار برقرار نشد؛ داده نمونه نمایش داده شده است'}</p></div></div></section>}
 
 function CampaignBanner(){return <section className="campaign-wrap"><div className="wrap campaign"><img src="/khodroto-market-banner.jpg" alt="کمپین اختصاصی خودروتو"/><div className="campaign-shade"/><div className="campaign-copy"><span><Sparkles/> عضویت حرفه‌ای خودروتو</span><h2>فرصت خوب منتظر نمی‌ماند.</h2><p>هشدار لحظه‌ای، فیلترهای کامل و دسترسی به همه نتایج زیر قیمت.</p><a href="/pricing" className="primary">دیدن پلن‌ها <ArrowLeft/></a></div><div className="campaign-badge"><b>۳۰٪</b><small>تخفیف شروع</small></div></div></section>}
 
@@ -89,7 +92,7 @@ function ActionModal({type,onClose,onDone}){
 }
 
 function App(){
-  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null),[marketStats,setMarketStats]=useState(null)
+  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null),[marketStats,setMarketStats]=useState(null),[siteSettings,setSiteSettings]=useState({})
   function showToast(message){setToast(message);window.clearTimeout(showToast.timer);showToast.timer=window.setTimeout(()=>setToast(''),3200)}
   async function loadListings(nextFilters=filters,limit=6){
     setLoading(true)
@@ -101,7 +104,7 @@ function App(){
     }catch{setStatus('demo');setNotice('دریافت اطلاعات ممکن نشد؛ داده نمونه نمایش داده می‌شود.')}
     finally{setLoading(false)}
   }
-  useEffect(()=>{if(window.location.pathname==='/'||window.location.pathname===''){loadListings({},6);const loadStats=()=>fetch('/api/stats/public').then(r=>r.json()).then(setMarketStats).catch(()=>{});loadStats();const timer=window.setInterval(loadStats,60000);return()=>window.clearInterval(timer)}},[])
+  useEffect(()=>{if(window.location.pathname==='/'||window.location.pathname===''){loadListings({},6);const loadStats=()=>fetch('/api/stats/public').then(r=>r.json()).then(setMarketStats).catch(()=>{});loadStats();fetch('/api/settings/public').then(r=>r.json()).then(setSiteSettings).catch(()=>{});const timer=window.setInterval(loadStats,60000);return()=>window.clearInterval(timer)}},[])
   function search(nextFilters){setFilters(nextFilters);loadListings(nextFilters,6);showToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.');document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})}
   function loadMore(){loadListings(filters,Math.min(200,cars.length+12))}
   const path=window.location.pathname.replace(/\/$/,'')||'/'
@@ -109,10 +112,10 @@ function App(){
   if(path==='/cars')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
   if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
-  if(path==='/admin')return <><AdminPage/>{overlays}</>
+  if(path==='/khodroto-admin')return <><AdminPage/>{overlays}</>
   if(infoPaths.includes(path))return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><InfoPage path={path} onToast={showToast}/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
   if(path!=='/')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><NotFoundPage/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
-  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats}/><MarketSlider/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
+  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats} settings={siteSettings}/><MarketSlider/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast} settings={siteSettings}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)

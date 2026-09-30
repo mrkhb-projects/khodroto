@@ -1,5 +1,6 @@
 import express from 'express'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { fallbackCars } from './src/data.js'
 import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
 import { createDatabase } from './src/server/database.js'
@@ -14,6 +15,9 @@ const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(re
 const adminPreview=process.env.ADMIN_PREVIEW==='true'&&process.env.NODE_ENV!=='production'
 const adminOnly=(req,res,next)=>adminPreview?(req.user={id:0,name:'مدیر پیش‌نمایش',role:'admin'},next()):requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
 const contactAttempts=new Map()
+const adminLoginAttempts=new Map()
+const adminCookie=result=>`khodroto_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.NODE_ENV==='production'?'; Secure':''}`
+const safeEqual=(left,right)=>{const a=Buffer.from(String(left||'')),b=Buffer.from(String(right||''));return a.length===b.length&&crypto.timingSafeEqual(a,b)}
 
 async function persistCrawl(result, { verifyMissing = true } = {}) {
   const category = result.category || 'light'
@@ -67,6 +71,8 @@ function applyBudget(items, budget = '') {
   return items
 }
 
+app.post('/api/admin/login',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now(),recent=(adminLoginAttempts.get(key)||[]).filter(time=>stamp-time<15*60*1000);if(recent.length>=8)return res.status(429).json({error:'TOO_MANY_ATTEMPTS'});adminLoginAttempts.set(key,[...recent,stamp]);const configured=String(process.env.ADMIN_PASSWORD||'');if(configured.length<12)return res.status(503).json({error:'ADMIN_LOGIN_NOT_CONFIGURED'});if(!safeEqual(req.body?.password,configured))return res.status(401).json({error:'INVALID_CREDENTIALS'});const result=store.createAdminSession(process.env.ADMIN_PHONE);if(!result)return res.status(503).json({error:'ADMIN_PHONE_NOT_CONFIGURED'});adminLoginAttempts.delete(key);res.setHeader('Set-Cookie',adminCookie(result));res.json({user:result.user})})
+app.get('/api/admin/session',(req,res)=>{const user=store.userFromToken(cookieToken(req));res.json({authenticated:Boolean(user?.role==='admin')})})
 app.post('/api/auth/request-otp',(req,res)=>{const phone=String(req.body?.phone||'');if(!/^09\d{9}$/.test(phone))return res.status(400).json({error:'INVALID_PHONE'});const code=store.requestOtp(phone);res.json({ok:true,expiresIn:120,...(process.env.NODE_ENV==='production'?{}:{debugCode:code})})})
 app.post('/api/auth/verify',(req,res)=>{const result=store.verifyOtp(String(req.body?.phone||''),String(req.body?.code||''));if(!result)return res.status(400).json({error:'INVALID_CODE'});res.setHeader('Set-Cookie',`khodroto_session=${result.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({user:result.user})})
 app.get('/api/auth/me',(req,res)=>res.json({user:store.userFromToken(cookieToken(req))}))
@@ -84,7 +90,7 @@ app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHist
 app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
 app.get('/api/content/slides',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json({items:store.slides(true)})})
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
-app.get('/api/settings/public',(_req,res)=>{const s=store.settings();res.json({site_name:s.site_name,site_tagline:s.site_tagline,support_phone:s.support_phone,support_email:s.support_email,maintenance_mode:s.maintenance_mode})})
+app.get('/api/settings/public',(_req,res)=>{const s=store.settings();res.json({site_name:s.site_name,site_tagline:s.site_tagline,support_phone:s.support_phone,support_email:s.support_email,maintenance_mode:s.maintenance_mode,card_golden:s.card_golden,card_good:s.card_good,card_fair:s.card_fair,card_expensive:s.card_expensive,card_suspicious:s.card_suspicious,mobile_listing_mode:s.mobile_listing_mode,hero_ticker:s.hero_ticker})})
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
 app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))
 app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);store.audit(req.user.id,'update_role','user',req.params.id,{role});res.json({ok:true})})
@@ -150,6 +156,7 @@ setInterval(warmMarketCache, cacheTtl).unref()
 // Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
 // one unambiguous port; all client-side routes fall back to index.html.
 if(process.env.PREVIEW_ROUTE&&process.env.NODE_ENV!=='production')app.get('/',(_req,res)=>res.redirect(process.env.PREVIEW_ROUTE))
+app.get('/admin',(_req,res)=>res.redirect(302,'/khodroto-admin'))
 const dist = path.resolve('dist')
 app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
 app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())

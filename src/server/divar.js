@@ -91,7 +91,7 @@ function normalizeWebItem(widget) {
   }
 }
 
-function webHeaders() {
+function webHeaders(env = process.env) {
   return {
     accept: 'application/json, text/plain, */*',
     'accept-language': 'fa-IR,fa;q=0.9,en;q=0.8',
@@ -101,6 +101,7 @@ function webHeaders() {
     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'x-render-type': 'CSR',
     'x-standard-divar-error': 'true',
+    ...(env.DIVAR_RELAY_TOKEN ? { 'x-khodroto-relay-token': String(env.DIVAR_RELAY_TOKEN) } : {}),
   }
 }
 
@@ -137,7 +138,7 @@ function readDetailFields(detail) {
 async function enrichWebItem(item, env, fetchImpl) {
   try {
     const detail = await jsonRequest(`${webApiBase(env)}/v8/posts-v2/web/${encodeURIComponent(item.token)}`, {
-      method: 'GET', provider: 'web', headers: webHeaders(),
+      method: 'GET', provider: 'web', headers: webHeaders(env),
     }, fetchImpl)
     const fields = readDetailFields(detail)
     return { ...item, ...fields, title: fields.title || item.title, image: fields.image || item.image, price: parseNumber(detail.webengage?.price) || item.price }
@@ -265,7 +266,7 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
       ? { '@type': 'type.googleapis.com/post_list.PaginationData', page, page_size: 60, ...cursor }
       : { '@type': 'type.googleapis.com/post_list.PaginationData', page: 1, page_size: 60 }
     const payload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/search`, {
-      method: 'POST', provider: 'web', headers: webHeaders(), body: JSON.stringify({ ...baseBody, pagination_data: paginationData }),
+      method: 'POST', provider: 'web', headers: webHeaders(env), body: JSON.stringify({ ...baseBody, pagination_data: paginationData }),
     }, fetchImpl)
     pagesFetched += 1
     for (const widget of payload.list_widgets || []) {
@@ -299,6 +300,8 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
   const inflight = new Map()
   let hydrated = false
   let writing = Promise.resolve()
+  let lastSuccessAt = null
+  let lastError = null
 
   async function hydrateCache() {
     if (hydrated) return
@@ -329,7 +332,8 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     const key = JSON.stringify(filters)
     if (inflight.has(key)) return inflight.get(key)
     const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
-      .then(value => { cache.set(key, { time: Date.now(), value }); persistCache(); return value })
+      .then(value => { lastSuccessAt=new Date().toISOString();lastError=null;cache.set(key, { time: Date.now(), value }); persistCache(); return value })
+      .catch(error=>{lastError={code:error.code||'UPSTREAM_ERROR',message:error.message,at:new Date().toISOString()};throw error})
       .finally(() => inflight.delete(key))
     inflight.set(key, request)
     return request
@@ -340,7 +344,7 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     const url = provider === 'kenar'
       ? `${KENAR_BASE_URL}/v1/open-platform/finder/post/${encodeURIComponent(token)}`
       : `${webApiBase(env)}/v8/posts-v2/web/${encodeURIComponent(token)}`
-    const headers = provider === 'kenar' ? { 'x-api-key': env.KENAR_API_KEY, accept: 'application/json' } : webHeaders()
+    const headers = provider === 'kenar' ? { 'x-api-key': env.KENAR_API_KEY, accept: 'application/json' } : webHeaders(env)
     try {
       await jsonRequest(url, { method: 'GET', provider, headers }, fetchImpl)
       return 'active'
@@ -366,6 +370,6 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     listings,
     refresh,
     verifyListing,
-    status: () => ({ configured: provider !== 'none', provider, official: provider === 'kenar', cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, refreshing: inflight.size > 0 }),
+    status: () => ({ configured: provider !== 'none', connected: Boolean(lastSuccessAt), provider, official: provider === 'kenar', viaRelay: provider==='web'&&String(env.DIVAR_API_BASE_URL||WEB_BASE_URL).replace(/\/$/,'')!==WEB_BASE_URL, cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, refreshing: inflight.size > 0, lastSuccessAt, lastError }),
   }
 }
