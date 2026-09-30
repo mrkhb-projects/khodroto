@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { analyzeListings } from './analyzer.js'
 
 const KENAR_BASE_URL = 'https://open-api.divar.ir'
 const WEB_BASE_URL = 'https://api.divar.ir'
@@ -41,23 +42,8 @@ function cohortKey(title = '') {
     .toLowerCase()
 }
 
-export function rankListings(items) {
-  const priced = items.filter(item => item.price > 0)
-  const cityMedian = median(priced.map(item => item.price))
-  const cohorts = new Map()
-  for (const item of priced) {
-    const key = cohortKey(item.title)
-    if (!cohorts.has(key)) cohorts.set(key, [])
-    cohorts.get(key).push(item.price)
-  }
-
-  return priced.map(item => {
-    const comparable = cohorts.get(cohortKey(item.title)) || []
-    const market = comparable.length >= 3 ? median(comparable) : cityMedian
-    const discount = market ? ((market - item.price) / market) * 100 : 0
-    const score = Math.round(clamp(50 + discount * 1.25, 0, 100))
-    return { ...item, market, discount: Number(discount.toFixed(1)), score, sampleSize: comparable.length >= 3 ? comparable.length : priced.length }
-  }).filter(item => item.discount <= 45).sort((a, b) => b.score - a.score)
+export function rankListings(items, options = {}) {
+  return analyzeListings(items, { ...options, includeNoPhoto: options.includeNoPhoto ?? true }).items
 }
 
 function relativeFreshness(date) {
@@ -245,7 +231,7 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
 export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
   const configuredCityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
   const cityIds = filters.cityIds?.length ? filters.cityIds : configuredCityIds
-  const category = env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
+  const category = ['light','motorcycles','heavy'].includes(filters.category) ? filters.category : env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
   const formData = { category: { str: { value: category } } }
   const addRange = (key,min,max) => { if(min||max) formData[key]={number_range:{...(min?{minimum:Number(min)}:{}),...(max?{maximum:Number(max)}:{})}} }
   addRange('price',filters.minPrice,filters.maxPrice)
@@ -296,12 +282,16 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
     if (requestDelay) await new Promise(resolve => setTimeout(resolve, requestDelay))
   }
 
-  const ranked = rankListings(applyLocalFilters(rows, filters))
+  const analysis = analyzeListings(applyLocalFilters(rows, filters), { category, includeNoPhoto: false })
+  const ranked = analysis.items
   if (filters.sort === 'cheap') ranked.sort((a,b)=>a.price-b.price)
   if (filters.sort === 'expensive') ranked.sort((a,b)=>b.price-a.price)
   const enrichedTop = await Promise.all(ranked.slice(0, 12).map(item => enrichWebItem(item, env, fetchImpl)))
-  const items = [...enrichedTop, ...ranked.slice(12)]
-  return { source: 'divar-web', items, totalAnalyzed: rows.length, pagesFetched, truncated: hasNextPage, updatedAt: new Date().toISOString() }
+  const finalAnalysis = analyzeListings([...enrichedTop, ...ranked.slice(12)], { category, includeNoPhoto: false })
+  const items = finalAnalysis.items
+  if (filters.sort === 'cheap') items.sort((a,b)=>a.price-b.price)
+  if (filters.sort === 'expensive') items.sort((a,b)=>b.price-a.price)
+  return { source: 'divar-web', items, totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, pagesFetched, truncated: hasNextPage, updatedAt: new Date().toISOString() }
 }
 
 export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null } = {}) {

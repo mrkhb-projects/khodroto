@@ -13,7 +13,8 @@ describe('Divar integration', () => {
       { id: '2', title: 'پژو ۲۰۷', price: 1000 },
       { id: '3', title: 'پژو ۲۰۷', price: 1200 },
     ])
-    expect(ranked[0]).toMatchObject({ id: '1', market: 1000, discount: 20, score: 75, sampleSize: 3 })
+    expect(ranked[0]).toMatchObject({ id: '1', market: 1000, discount: 20, sampleSize: 3 })
+    expect(ranked[0].score).toBeGreaterThan(ranked.at(-1).score)
   })
 
   it('uses the official Kenar API and x-api-key', async () => {

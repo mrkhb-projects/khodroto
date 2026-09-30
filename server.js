@@ -25,6 +25,8 @@ function searchFilters(query) {
   const brand = String(query.brand || '').trim()
   const freeQuery = [query.model, query.query].map(value=>String(value||'').trim()).filter(Boolean).join(' ')
   return {
+    category: ['light','motorcycles','heavy'].includes(String(query.category)) ? String(query.category) : 'light',
+    suspiciousOnly: String(query.suspiciousOnly)==='true',
     city: /^[a-z0-9-]{1,40}$/.test(String(query.city || '')) ? String(query.city) : undefined,
     cityIds: /^\d+(,\d+)*$/.test(String(query.city || '')) ? String(query.city).split(',') : undefined,
     queryText: [brand && !brand.startsWith('همه') ? brand : '', freeQuery].filter(Boolean).join(' ').slice(0,128) || undefined,
@@ -82,7 +84,8 @@ app.get('/api/integration/status', (_req, res) => {
 app.get('/api/listings', async (req, res) => {
   try {
     const result = await divar.listings(searchFilters(req.query))
-    const filtered = applyBudget(result.items, String(req.query.budget || ''))
+    const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
+    const filtered = String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
     const offset = Math.max(0, Number(req.query.offset) || 0)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
     res.set('Cache-Control', 'private, max-age=60')
