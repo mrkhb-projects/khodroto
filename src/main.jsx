@@ -1,19 +1,22 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createPortal } from 'react-dom'
+import { CarsPage, DashboardPage, PricingPage } from './pages'
 import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
 import './styles.css'
+import './pages.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
 
-function Brand(){ return <a className="brand" href="#top" aria-label="خودروتو"><span className="brand-mark"><span /></span><strong>خودروتو</strong></a> }
+function Brand(){ return <a className="brand" href="/" aria-label="خودروتو"><span className="brand-mark"><span /></span><strong>خودروتو</strong></a> }
 
 function Header({onLogin}){
   const [open,setOpen]=useState(false)
   return <header className="header"><div className="wrap nav"><Brand/><nav className={open?'open':''} onClick={()=>setOpen(false)}>
-    <a href="#opportunities">فرصت‌های خرید</a><a href="#method">چطور کار می‌کند؟</a><a href="#score">راهنمای امتیاز</a><a href="#faq">پرسش‌ها</a>
-  </nav><div className="nav-actions"><button className="login" onClick={onLogin}>ورود</button><a className="primary small" href="#search">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
+    <a href="/cars">آگهی‌های خودرو</a><a href="/#method">چطور کار می‌کند؟</a><a href="/pricing">خرید اشتراک</a><a href="/dashboard">داشبورد من</a>
+  </nav><div className="nav-actions"><button className="login" onClick={onLogin}>ورود</button><a className="primary small" href="/cars">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
 }
 
 function Hero(){ return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
@@ -35,8 +38,8 @@ function SearchPanel({onSearch}){
 
 function CarCard({car,index,onToast}){
  const storageKey=`khodroto:saved:${car.id}`
- const [saved,setSaved]=useState(()=>localStorage.getItem(storageKey)==='1')
- function toggleSaved(){const next=!saved;setSaved(next);if(next)localStorage.setItem(storageKey,'1');else localStorage.removeItem(storageKey);onToast(next?'آگهی در علاقه‌مندی‌ها ذخیره شد.':'آگهی از علاقه‌مندی‌ها حذف شد.')}
+ const [saved,setSaved]=useState(()=>localStorage.getItem(storageKey)!==null)
+ function toggleSaved(){const next=!saved;setSaved(next);if(next)localStorage.setItem(storageKey,JSON.stringify(car));else localStorage.removeItem(storageKey);onToast(next?'آگهی در علاقه‌مندی‌ها ذخیره شد.':'آگهی از علاقه‌مندی‌ها حذف شد.')}
  return <article className="car-card">
  <div className="car-img"><img src={car.image || '/khodroto-hero.jpg'} style={{objectPosition:car.imagePos || 'center'}} alt={car.title}/><span className="time">{car.freshness}</span><button className={saved?'saved':''} onClick={toggleSaved} aria-label={saved?'حذف از ذخیره‌ها':'ذخیره آگهی'}><Heart fill={saved?'currentColor':'none'}/></button></div>
  <div className="car-body"><div className="card-top"><div><span className="place">{car.city}</span><h3>{car.title}</h3></div><div className={'score '+(car.score>=85?'gold':'')}><b>{num(car.score)}</b><span>{car.score>=85?'فرصت عالی':'زیر قیمت'}</span></div></div>
@@ -62,7 +65,7 @@ function ActionModal({type,onClose,onDone}){
  const [phone,setPhone]=useState('')
  const title=type==='login'?'ورود به خودروتو':'فعال‌سازی اعلان هوشمند'
  function submit(e){e.preventDefault();if(!/^09\d{9}$/.test(phone)){onDone('شماره موبایل را به‌صورت صحیح وارد کن.');return}localStorage.setItem('khodroto:phone',phone);onDone(type==='login'?'شماره ثبت شد؛ ورود پیامکی در نسخه بعدی فعال می‌شود.':'اعلان برای این شماره فعال شد.');onClose()}
- return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="بستن"><X/></button><div className="modal-icon">{type==='login'?<ShieldCheck/>:<Bell/>}</div><h3>{title}</h3><p>{type==='login'?'شماره موبایلت را وارد کن تا آگهی‌های ذخیره‌شده را نگه داری.':'شماره‌ات را ثبت کن تا فرصت‌های مطابق فیلترها را از دست ندهی.'}</p><form onSubmit={submit}><label>شماره موبایل</label><input dir="ltr" inputMode="numeric" value={phone} onChange={e=>setPhone(e.target.value.replace(/\D/g,'').slice(0,11))} placeholder="09123456789" autoFocus/><button className="primary" type="submit">ثبت و ادامه</button></form><small>در نسخه دمو پیامک واقعی ارسال نمی‌شود.</small></div></div>
+ return createPortal(<div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="بستن"><X/></button><div className="modal-icon">{type==='login'?<ShieldCheck/>:<Bell/>}</div><h3>{title}</h3><p>{type==='login'?'شماره موبایلت را وارد کن تا آگهی‌های ذخیره‌شده را نگه داری.':'شماره‌ات را ثبت کن تا فرصت‌های مطابق فیلترها را از دست ندهی.'}</p><form onSubmit={submit}><label>شماره موبایل</label><input dir="ltr" inputMode="numeric" value={phone} onChange={e=>setPhone(e.target.value.replace(/\D/g,'').slice(0,11))} placeholder="09123456789" autoFocus/><button className="primary" type="submit">ثبت و ادامه</button></form><small>در نسخه دمو پیامک واقعی ارسال نمی‌شود.</small></div></div>,document.body)
 }
 
 function App(){
@@ -80,10 +83,15 @@ function App(){
     }catch{setStatus('demo');setNotice('دریافت اطلاعات ممکن نشد؛ داده نمونه نمایش داده می‌شود.')}
     finally{setLoading(false)}
   }
-  useEffect(()=>{loadListings({},6)},[])
+  useEffect(()=>{if(window.location.pathname==='/'||window.location.pathname==='')loadListings({},6)},[])
   function search(nextFilters){setFilters(nextFilters);loadListings(nextFilters,6);showToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.');document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})}
   function loadMore(){loadListings(filters,Math.min(200,cars.length+12))}
-  return <><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{modal&&<ActionModal type={modal} onClose={()=>setModal(null)} onDone={showToast}/>} {toast&&<div className="toast"><Check/>{toast}</div>}</>
+  const path=window.location.pathname.replace(/\/$/,'')||'/'
+  const overlays=<>{modal&&<ActionModal type={modal} onClose={()=>setModal(null)} onDone={showToast}/>} {toast&&<div className="toast"><Check/>{toast}</div>}</>
+  if(path==='/cars')return <><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
+  if(path==='/pricing')return <><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
+  if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
+  return <><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)

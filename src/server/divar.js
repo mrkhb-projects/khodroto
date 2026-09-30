@@ -243,13 +243,18 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
 }
 
 export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
-  const cityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
+  const configuredCityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
+  const cityIds = filters.cityIds?.length ? filters.cityIds : configuredCityIds
   const category = env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
   const formData = { category: { str: { value: category } } }
-  if (filters.minPrice || filters.maxPrice) formData.price = { number_range: {
-    ...(filters.minPrice ? { minimum: filters.minPrice } : {}),
-    ...(filters.maxPrice ? { maximum: filters.maxPrice } : {}),
-  } }
+  const addRange = (key,min,max) => { if(min||max) formData[key]={number_range:{...(min?{minimum:Number(min)}:{}),...(max?{maximum:Number(max)}:{})}} }
+  addRange('price',filters.minPrice,filters.maxPrice)
+  addRange('production-year',filters.minYear,filters.maxYear)
+  addRange('usage',null,filters.maxUsage)
+  if(filters.gearbox) formData.gearbox={repeated_string:{value:[filters.gearbox]}}
+  if(filters.body) formData.body_status={repeated_string:{value:[filters.body]}}
+  if(filters.color) formData.color={repeated_string:{value:[filters.color]}}
+  if(filters.seller) formData.business_type={repeated_string:{value:[filters.seller]}}
   const searchData = { form_data: { data: formData } }
   if (filters.queryText) searchData.query = filters.queryText
   const baseBody = {
@@ -292,6 +297,8 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   }
 
   const ranked = rankListings(applyLocalFilters(rows, filters))
+  if (filters.sort === 'cheap') ranked.sort((a,b)=>a.price-b.price)
+  if (filters.sort === 'expensive') ranked.sort((a,b)=>b.price-a.price)
   const enrichedTop = await Promise.all(ranked.slice(0, 12).map(item => enrichWebItem(item, env, fetchImpl)))
   const items = [...enrichedTop, ...ranked.slice(12)]
   return { source: 'divar-web', items, totalAnalyzed: rows.length, pagesFetched, truncated: hasNextPage, updatedAt: new Date().toISOString() }

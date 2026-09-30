@@ -16,13 +16,23 @@ function searchFilters(query) {
   const normalizedYear = year.replace(/[۰-۹]/g, digit => '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))
   const years = normalizedYear.match(/\d{4}/g)?.map(Number) || []
   const budget = String(query.budget || '')
+  const directNumber = value => /^\d+$/.test(String(value || '')) ? Number(value) : undefined
+  const brand = String(query.brand || '').trim()
+  const freeQuery = String(query.query || '').trim()
   return {
-    city: /^[a-z0-9-]{2,40}$/.test(String(query.city || '')) ? String(query.city) : undefined,
-    queryText: String(query.brand || '').trim().slice(0, 128) || undefined,
-    minYear: year.includes('بالا') || years.length > 1 ? years[0] : undefined,
-    maxYear: year.includes('پیش') ? years[0] : years[1],
-    minPrice: budget.includes('بیشتر') ? 1_200_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 700_000_000 : undefined,
-    maxPrice: budget.includes('تا ۷۰۰') ? 700_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 1_200_000_000 : undefined,
+    city: /^[a-z0-9-]{1,40}$/.test(String(query.city || '')) ? String(query.city) : undefined,
+    cityIds: /^\d+(,\d+)*$/.test(String(query.city || '')) ? String(query.city).split(',') : undefined,
+    queryText: [brand && !brand.startsWith('همه') ? brand : '', freeQuery].filter(Boolean).join(' ').slice(0,128) || undefined,
+    minYear: directNumber(query.minYear) || (year.includes('بالا') || years.length > 1 ? years[0] : undefined),
+    maxYear: directNumber(query.maxYear) || (year.includes('پیش') ? years[0] : years[1]),
+    maxUsage: directNumber(query.maxUsage),
+    gearbox: String(query.gearbox || '').slice(0,30) || undefined,
+    body: String(query.body || '').slice(0,30) || undefined,
+    color: String(query.color || '').slice(0,30) || undefined,
+    seller: String(query.seller || '').slice(0,30) || undefined,
+    sort: ['score','newest','cheap','expensive'].includes(String(query.sort)) ? String(query.sort) : 'score',
+    minPrice: directNumber(query.minPrice) || (budget.includes('بیشتر') ? 1_200_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 700_000_000 : undefined),
+    maxPrice: directNumber(query.maxPrice) || (budget.includes('تا ۷۰۰') ? 700_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 1_200_000_000 : undefined),
   }
 }
 
