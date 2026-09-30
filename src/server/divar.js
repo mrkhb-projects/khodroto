@@ -84,19 +84,76 @@ function normalizeKenarSearchItem(post) {
 
 function normalizeWebItem(widget) {
   const data = widget?.data || {}
-  const price = parseNumber(data.middle_description || data.bottom_description)
+  const payload = data.action?.payload || {}
+  const webInfo = payload.web_info || {}
+  const price = parseNumber(data.middle_description_text)
   return {
-    id: data.token,
-    token: data.token,
+    id: data.token || payload.token,
+    token: data.token || payload.token,
     title: data.title || 'خودرو',
     year: 0,
     km: 0,
     color: '—',
-    city: data.top_description || 'دیوار',
+    city: [webInfo.city_persian, webInfo.district_persian].filter(Boolean).join('، ') || 'دیوار',
     price,
-    freshness: 'تازه',
-    link: data.token ? `https://divar.ir/v/${data.token}` : 'https://divar.ir/s/tehran/car',
-    image: data.image_url?.[0]?.src || data.image_url || null,
+    freshness: (data.bottom_description_text || '').split(' در ')[0] || 'تازه',
+    link: (data.token || payload.token) ? `https://divar.ir/v/${data.token || payload.token}` : 'https://divar.ir/s/tehran/car',
+    image: data.image_url || null,
+  }
+}
+
+function webHeaders() {
+  return {
+    accept: 'application/json, text/plain, */*',
+    'accept-language': 'fa-IR,fa;q=0.9,en;q=0.8',
+    'content-type': 'application/json',
+    origin: 'https://divar.ir',
+    referer: 'https://divar.ir/',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'x-render-type': 'CSR',
+    'x-standard-divar-error': 'true',
+  }
+}
+
+function webApiBase(env) {
+  const configured = env.DIVAR_API_BASE_URL || WEB_BASE_URL
+  try {
+    const url = new URL(configured)
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error('protocol')
+    return url.origin
+  } catch {
+    throw new DivarUpstreamError('DIVAR_API_BASE_URL is invalid', { status: 500, provider: 'web', code: 'BAD_CONFIG' })
+  }
+}
+
+function readDetailFields(detail) {
+  const result = { title: '', image: null, year: 0, km: 0, color: '—' }
+  for (const section of detail.sections || []) {
+    for (const widget of section.widgets || []) {
+      const data = widget.data || {}
+      if (section.section_name === 'TITLE' && !result.title) result.title = data.title || ''
+      if (section.section_name === 'IMAGE' && !result.image) result.image = data.items?.[0]?.image?.url || data.items?.[0]?.image?.thumbnail_url || null
+      const fields = widget.widget_type === 'GROUP_INFO_ROW' ? data.items || [] : widget.widget_type === 'UNEXPANDABLE_ROW' ? [data] : []
+      for (const field of fields) {
+        const label = String(field.title || '')
+        if (label.includes('کارکرد')) result.km = parseNumber(field.value)
+        if (label.includes('مدل') || label.includes('سال تولید')) result.year = parseNumber(field.value)
+        if (label.includes('رنگ')) result.color = field.value || result.color
+      }
+    }
+  }
+  return result
+}
+
+async function enrichWebItem(item, env, fetchImpl) {
+  try {
+    const detail = await jsonRequest(`${webApiBase(env)}/v8/posts-v2/web/${encodeURIComponent(item.token)}`, {
+      method: 'GET', provider: 'web', headers: webHeaders(),
+    }, fetchImpl)
+    const fields = readDetailFields(detail)
+    return { ...item, ...fields, title: fields.title || item.title, image: fields.image || item.image, price: parseNumber(detail.webengage?.price) || item.price }
+  } catch {
+    return item
   }
 }
 
@@ -104,7 +161,8 @@ async function jsonRequest(url, options, fetchImpl) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 9000)
   try {
-    const response = await fetchImpl(url, { ...options, signal: controller.signal })
+    const { provider, ...requestOptions } = options
+    const response = await fetchImpl(url, { ...requestOptions, signal: controller.signal })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) {
       throw new DivarUpstreamError(body?.message || `Divar responded with ${response.status}`, {
@@ -182,20 +240,36 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
 }
 
 export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
-  if (env.DIVAR_ALLOW_UNOFFICIAL !== 'true') throw new DivarUpstreamError('Unofficial adapter is disabled', { status: 503, provider: 'web', code: 'NOT_CONFIGURED' })
-  const city = filters.city || env.DIVAR_CITY || 'tehran'
-  const payload = await jsonRequest(`${WEB_BASE_URL}/v8/web-search/${encodeURIComponent(city)}/car`, {
-    method: 'POST', provider: 'web', headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'Khodroto/1.0' },
-    body: JSON.stringify({ page: 1, json_schema: { category: { value: 'car' }, cities: [city] } }),
+  const cityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
+  const category = env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
+  const formData = { category: { str: { value: category } } }
+  if (filters.minPrice || filters.maxPrice) formData.price = { number_range: {
+    ...(filters.minPrice ? { minimum: filters.minPrice } : {}),
+    ...(filters.maxPrice ? { maximum: filters.maxPrice } : {}),
+  } }
+  const searchData = { form_data: { data: formData } }
+  if (filters.queryText) searchData.query = filters.queryText
+  const body = {
+    city_ids: cityIds.length ? cityIds : ['1'],
+    search_data: searchData,
+    pagination_data: { '@type': 'type.googleapis.com/post_list.PaginationData', page: 1, page_size: 60 },
+    disable_recommendation: false,
+    current_tab_slug: 'default',
+  }
+  const payload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/search`, {
+    method: 'POST', provider: 'web', headers: webHeaders(), body: JSON.stringify(body),
   }, fetchImpl)
-  const normalized = (payload.web_widgets?.post_list || []).map(normalizeWebItem).filter(item => item.id && item.price)
-  return { source: 'divar-web', items: rankListings(applyLocalFilters(normalized, filters)).slice(0, 6), totalAnalyzed: normalized.length, updatedAt: new Date().toISOString() }
+  const normalized = (payload.list_widgets || []).filter(widget => widget.widget_type === 'POST_ROW').map(normalizeWebItem).filter(item => item.id && item.price)
+  const ranked = rankListings(applyLocalFilters(normalized, filters)).slice(0, 6)
+  const items = await Promise.all(ranked.map(item => enrichWebItem(item, env, fetchImpl)))
+  return { source: 'divar-web', items, totalAnalyzed: normalized.length, updatedAt: new Date().toISOString() }
 }
 
 export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 15 * 60 * 1000 } = {}) {
   const cache = new Map()
   const inflight = new Map()
-  const provider = env.KENAR_API_KEY ? 'kenar' : env.DIVAR_ALLOW_UNOFFICIAL === 'true' ? 'web' : 'none'
+  const requestedProvider = String(env.DIVAR_PROVIDER || '').toLowerCase()
+  const provider = requestedProvider === 'disabled' ? 'none' : requestedProvider === 'kenar' ? (env.KENAR_API_KEY ? 'kenar' : 'none') : env.KENAR_API_KEY && requestedProvider !== 'web' ? 'kenar' : 'web'
 
   async function listings(filters = {}) {
     const key = JSON.stringify(filters)

@@ -34,7 +34,8 @@ function applyBudget(items, budget = '') {
 }
 
 app.get('/api/integration/status', (_req, res) => {
-  res.json({ ...divar.status(), source: 'Kenar-e-Divar', documentation: 'https://github.com/divar-ir/kenar-docs' })
+  const status = divar.status()
+  res.json({ ...status, source: status.provider === 'kenar' ? 'Kenar-e-Divar' : status.provider === 'web' ? 'Divar public web endpoints' : 'disabled', documentation: status.provider === 'kenar' ? 'https://github.com/divar-ir/kenar-docs' : 'https://github.com/shojaee76-cmyk/divar-mcp' })
 })
 
 app.get('/api/listings', async (req, res) => {
