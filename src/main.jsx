@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
 import { CarsPage, DashboardPage, PricingPage } from './pages'
+import { AdminPage } from './admin'
 import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, Gauge, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
 import './styles.css'
@@ -71,10 +72,10 @@ function FAQ(){const qs=['اطلاعات خودروها از کجا می‌آی�
 function Footer({onNotify}){return <footer><div className="wrap footer-top"><div><Brand/><p>ماشین خوب، قیمت درست.</p></div><div><b>خودروتو</b><a href="#method">درباره ما</a><a href="#faq">پرسش‌ها</a></div><div><b>سرویس</b><a href="#opportunities">فرصت‌ها</a><a href="#score">راهنمای امتیاز</a></div><div className="notify"><b>فرصت خوب را از دست نده</b><p>اعلان هوشمند خودروهای منتخب</p><button onClick={onNotify}><Bell/> خبرم کن</button></div></div><div className="wrap copyright"><span>© ۱۴۰۵ خودروتو — همه حقوق محفوظ است.</span><span>ساخته‌شده برای خرید آگاهانه</span></div></footer>}
 
 function ActionModal({type,onClose,onDone}){
- const [phone,setPhone]=useState('')
+ const [phone,setPhone]=useState(''),[code,setCode]=useState(''),[step,setStep]=useState('phone'),[busy,setBusy]=useState(false),[debugCode,setDebugCode]=useState('')
  const title=type==='login'?'ورود به خودروتو':'فعال‌سازی اعلان هوشمند'
- function submit(e){e.preventDefault();if(!/^09\d{9}$/.test(phone)){onDone('شماره موبایل را به‌صورت صحیح وارد کن.');return}localStorage.setItem('khodroto:phone',phone);onDone(type==='login'?'شماره ثبت شد؛ ورود پیامکی در نسخه بعدی فعال می‌شود.':'اعلان برای این شماره فعال شد.');onClose()}
- return createPortal(<div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="بستن"><X/></button><div className="modal-icon">{type==='login'?<ShieldCheck/>:<Bell/>}</div><h3>{title}</h3><p>{type==='login'?'شماره موبایلت را وارد کن تا آگهی‌های ذخیره‌شده را نگه داری.':'شماره‌ات را ثبت کن تا فرصت‌های مطابق فیلترها را از دست ندهی.'}</p><form onSubmit={submit}><label>شماره موبایل</label><input dir="ltr" inputMode="numeric" value={phone} onChange={e=>setPhone(e.target.value.replace(/\D/g,'').slice(0,11))} placeholder="09123456789" autoFocus/><button className="primary" type="submit">ثبت و ادامه</button></form><small>در نسخه دمو پیامک واقعی ارسال نمی‌شود.</small></div></div>,document.body)
+ async function submit(e){e.preventDefault();if(!/^09\d{9}$/.test(phone)){onDone('شماره موبایل را به‌صورت صحیح وارد کن.');return}setBusy(true);try{if(step==='phone'){const r=await fetch('/api/auth/request-otp',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone})}),d=await r.json();if(!r.ok)throw Error();setDebugCode(d.debugCode||'');setStep('code')}else{const r=await fetch('/api/auth/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({phone,code})});if(!r.ok)throw Error();localStorage.setItem('khodroto:phone',phone);if(type==='notify')await fetch('/api/alerts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:'فرصت‌های منتخب من',filters:{}})});onDone(type==='login'?'با موفقیت وارد شدی.':'اعلان هوشمند فعال شد.');onClose()}}catch{onDone('عملیات انجام نشد؛ اطلاعات را بررسی کن.')}finally{setBusy(false)}}
+ return createPortal(<div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={onClose} aria-label="بستن"><X/></button><div className="modal-icon">{type==='login'?<ShieldCheck/>:<Bell/>}</div><h3>{title}</h3><p>{type==='login'?'شماره موبایلت را وارد کن تا آگهی‌های ذخیره‌شده را نگه داری.':'شماره‌ات را ثبت کن تا فرصت‌های مطابق فیلترها را از دست ندهی.'}</p><form onSubmit={submit}><label>{step==='phone'?'شماره موبایل':'کد تأیید'}</label>{step==='phone'?<input dir="ltr" inputMode="numeric" value={phone} onChange={e=>setPhone(e.target.value.replace(/\D/g,'').slice(0,11))} placeholder="09123456789" autoFocus/>:<input dir="ltr" inputMode="numeric" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,'').slice(0,5))} placeholder="کد ۵ رقمی" autoFocus/>}<button className="primary" disabled={busy} type="submit">{busy?'در حال بررسی…':step==='phone'?'دریافت کد':'تأیید و ورود'}</button></form><small>{debugCode?`کد محیط آزمایشی: ${debugCode}`:'کد فقط دو دقیقه اعتبار دارد.'}</small></div></div>,document.body)
 }
 
 function App(){
@@ -98,7 +99,9 @@ function App(){
   if(path==='/cars')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
   if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
+  if(path==='/admin')return <><AdminPage/>{overlays}</>
   return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)
+if('serviceWorker' in navigator&&import.meta.env.PROD)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))

@@ -4,3 +4,4 @@ dist/
 .DS_Store
 data/divar-cache.json
 data/divar-cache.json.tmp
+data/khodroto.db*

@@ -2,11 +2,15 @@ import express from 'express'
 import path from 'node:path'
 import { fallbackCars } from './src/data.js'
 import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
+import { createDatabase } from './src/server/database.js'
 
 const app = express()
 const PORT = process.env.PORT || 5173
 const cacheTtl = Math.max(5, Number(process.env.DIVAR_CACHE_TTL_MINUTES) || 10) * 60 * 1000
 const divar = createDivarService({ cacheTtlMs: cacheTtl, cacheFile: process.env.DIVAR_CACHE_FILE || 'data/divar-cache.json' })
+const store = createDatabase()
+const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('='))).khodroto_session
+const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
 
 app.disable('x-powered-by')
 app.use(express.json({ limit: '20kb' }))
@@ -45,6 +49,20 @@ function applyBudget(items, budget = '') {
   return items
 }
 
+app.post('/api/auth/request-otp',(req,res)=>{const phone=String(req.body?.phone||'');if(!/^09\d{9}$/.test(phone))return res.status(400).json({error:'INVALID_PHONE'});const code=store.requestOtp(phone);res.json({ok:true,expiresIn:120,...(process.env.NODE_ENV==='production'?{}:{debugCode:code})})})
+app.post('/api/auth/verify',(req,res)=>{const result=store.verifyOtp(String(req.body?.phone||''),String(req.body?.code||''));if(!result)return res.status(400).json({error:'INVALID_CODE'});res.setHeader('Set-Cookie',`khodroto_session=${result.token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV==='production'?'; Secure':''}`);res.json({user:result.user})})
+app.get('/api/auth/me',(req,res)=>res.json({user:store.userFromToken(cookieToken(req))}))
+app.post('/api/auth/logout',(req,res)=>{store.logout(cookieToken(req));res.setHeader('Set-Cookie','khodroto_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');res.json({ok:true})})
+app.patch('/api/user',requireUser,(req,res)=>res.json({user:store.updateUser(req.user.id,{name:String(req.body.name||req.user.name).slice(0,80),city:String(req.body.city||req.user.city).slice(0,20)})}))
+app.get('/api/alerts',requireUser,(req,res)=>res.json({items:store.alerts(req.user.id)}))
+app.post('/api/alerts',requireUser,(req,res)=>{store.createAlert(req.user.id,{title:String(req.body.title||'هشدار خودرو').slice(0,100),filters:req.body.filters||{}});res.status(201).json({ok:true})})
+app.patch('/api/alerts/:id',requireUser,(req,res)=>{store.toggleAlert(req.user.id,Number(req.params.id),Boolean(req.body.enabled));res.json({ok:true})})
+app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{subject:String(req.body.subject||'پشتیبانی').slice(0,100),message:String(req.body.message||'').slice(0,2000)});res.status(201).json({ok:true})})
+app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
+app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plans={pro:199000,dealer:499000},plan=String(req.body.plan||'');if(!plans[plan])return res.status(400).json({error:'INVALID_PLAN'});res.json({subscription:store.subscribe(req.user.id,plan,plans[plan]),mode:process.env.PAYMENT_GATEWAY?'gateway':'sandbox'})})
+app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
+app.get('/api/admin/stats',requireUser,(req,res)=>{if(req.user.role!=='admin')return res.status(403).json({error:'FORBIDDEN'});res.json(store.stats())})
+
 app.get('/api/integration/status', (_req, res) => {
   const status = divar.status()
   res.json({ ...status, source: status.provider === 'kenar' ? 'Kenar-e-Divar' : status.provider === 'web' ? 'Divar public web endpoints' : 'disabled', documentation: status.provider === 'kenar' ? 'https://github.com/divar-ir/kenar-docs' : 'https://github.com/shojaee76-cmyk/divar-mcp' })
@@ -75,7 +93,7 @@ app.get('/api/listings', async (req, res) => {
 
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
-const warmMarketCache = () => divar.refresh({}).then(result => console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+const warmMarketCache = () => divar.refresh({}).then(result => {store.storeListings(result.items);console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)}).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
 warmMarketCache()
 setInterval(warmMarketCache, cacheTtl).unref()
 
