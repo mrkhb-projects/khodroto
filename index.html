@@ -7,7 +7,7 @@
     <meta name="description" content="خودروتو؛ کشف آگهی‌های خودروی زیر قیمت بازار با تحلیل مدل، سال و کارکرد." />
     <title>خودروتو | فرصت‌های واقعیِ بازار خودرو</title>
     <link rel="preload" href="/public/fonts/RaviFaNum-Regular.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="stylesheet" href="/styles.css?v=3" />
+    <link rel="stylesheet" href="/styles.css?v=4" />
   </head>
   <body>
     <div class="announcement" role="status">
@@ -110,7 +110,7 @@
           </div>
           <form class="filter-panel" id="filter-form">
             <div class="filter-grid">
-              <label class="field"><span>شهر</span><select id="city"><option value="all">همهٔ شهرها</option><option value="tehran">تهران</option><option value="karaj">کرج</option><option value="mashhad">مشهد</option></select></label>
+              <label class="field"><span>شهر</span><select id="city"><option value="tehran" selected>تهران</option><option value="karaj">کرج</option><option value="mashhad">مشهد</option><option value="isfahan">اصفهان</option><option value="shiraz">شیراز</option><option value="all">همهٔ شهرها</option></select></label>
               <label class="field"><span>برند یا مدل</span><select id="model"><option value="all">همهٔ خودروها</option><option value="dignity">دیگنیتی</option><option value="dena">دنا پلاس</option><option value="tara">تارا</option><option value="fidelity">فیدلیتی</option><option value="207">پژو ۲۰۷</option><option value="haima">هایما</option></select></label>
               <label class="field"><span>حداکثر بودجه</span><select id="budget"><option value="0">بدون سقف</option><option value="800">تا ۸۰۰ میلیون</option><option value="1200">تا ۱.۲ میلیارد</option><option value="1600">تا ۱.۶ میلیارد</option><option value="2200">تا ۲.۲ میلیارد</option></select></label>
               <label class="field"><span>سال ساخت از</span><select id="year"><option value="0">مهم نیست</option><option value="1403">۱۴۰۳</option><option value="1402">۱۴۰۲</option><option value="1401">۱۴۰۱</option><option value="1400">۱۴۰۰</option><option value="1399">۱۳۹۹</option></select></label>
@@ -123,6 +123,10 @@
               <button type="button" data-quick="zero">بدون رنگ</button>
               <button type="button" data-quick="lowMileage">کارکرد کم</button>
               <button type="button" data-quick="newest">مدل ۱۴۰۲ به بالا</button>
+            </div>
+            <div class="source-handoff">
+              <div><span class="source-handoff-icon">↗</span><p><b>تازه‌ترین آگهی‌های منبع را خودت ببین.</b><small>خودروتو هیچ داده‌ای از دیوار دریافت یا ذخیره نمی‌کند.</small></p></div>
+              <a class="divar-search-link" id="divar-search" href="https://divar.ir/s/tehran/car" target="_blank" rel="noopener noreferrer">جست‌وجوی خودرو در دیوار <span>↗</span></a>
             </div>
           </form>
           <div class="market-note"><span class="note-icon">✦</span><p>خودروتو قیمت هر آگهی را با <b>میانهٔ آگهی‌های هم‌مدل، هم‌سال و هم‌کارکرد</b> مقایسه می‌کند؛ نه با یک عددِ کلی برای همهٔ خودروها.</p></div>
@@ -201,6 +205,6 @@
       </div>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script src="/app.js?v=3"></script>
+    <script src="/app.js?v=4"></script>
   </body>
 </html>
