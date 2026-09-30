@@ -11,6 +11,7 @@ const divar = createDivarService({ cacheTtlMs: cacheTtl, cacheFile: process.env.
 const store = createDatabase()
 const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('='))).khodroto_session
 const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
+const adminOnly=(req,res,next)=>requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
 
 app.disable('x-powered-by')
 app.use(express.json({ limit: '20kb' }))
@@ -61,7 +62,17 @@ app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
 app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plans={pro:199000,dealer:499000},plan=String(req.body.plan||'');if(!plans[plan])return res.status(400).json({error:'INVALID_PLAN'});res.json({subscription:store.subscribe(req.user.id,plan,plans[plan]),mode:process.env.PAYMENT_GATEWAY?'gateway':'sandbox'})})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
-app.get('/api/admin/stats',requireUser,(req,res)=>{if(req.user.role!=='admin')return res.status(403).json({error:'FORBIDDEN'});res.json(store.stats())})
+app.get('/api/settings/public',(_req,res)=>{const s=store.settings();res.json({site_name:s.site_name,site_tagline:s.site_tagline,support_phone:s.support_phone,support_email:s.support_email,maintenance_mode:s.maintenance_mode})})
+app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
+app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))
+app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);res.json({ok:true})})
+app.get('/api/admin/subscriptions',adminOnly,(_req,res)=>res.json({items:store.adminSubscriptions()}))
+app.get('/api/admin/tickets',adminOnly,(_req,res)=>res.json({items:store.adminTickets()}))
+app.patch('/api/admin/tickets/:id',adminOnly,(req,res)=>{const status=['open','pending','closed'].includes(req.body.status)?req.body.status:'open';store.setTicketStatus(Number(req.params.id),status);res.json({ok:true})})
+app.get('/api/admin/listings',adminOnly,(_req,res)=>res.json({items:store.adminListings()}))
+app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
+app.patch('/api/admin/settings',adminOnly,(req,res)=>res.json({settings:store.updateSettings(req.body||{})}))
+app.post('/api/admin/crawler/refresh',adminOnly,async(_req,res)=>{try{const result=await divar.refresh({});store.storeListings(result.items);res.json({ok:true,total:result.totalAnalyzed,pages:result.pagesFetched})}catch(error){res.status(502).json({error:error.code||'CRAWLER_ERROR'})}})
 
 app.get('/api/integration/status', (_req, res) => {
   const status = divar.status()

@@ -1,0 +1,16 @@
+services:
+  khodroto:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:5173:5173"
+    volumes:
+      - khodroto_data:/app/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173/api/integration/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+volumes:
+  khodroto_data:
