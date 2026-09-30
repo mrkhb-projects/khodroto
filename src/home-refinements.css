@@ -1,0 +1,211 @@
+/* Homepage campaign, score and customer FAQ refinements */
+.score-card .dial {
+  background: conic-gradient(#168a63 0 91%, #e4eee9 91%);
+  box-shadow: 0 14px 35px rgba(22, 138, 99, 0.2);
+}
+
+.score-card .dial span {
+  color: #087552;
+  font-size: 40px;
+  font-weight: 900;
+}
+
+.score-card .dial small {
+  color: #4f7468;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.faq {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(145deg, #f6f3ed 0%, #fff 52%, #eef7f4 100%);
+}
+
+.faq::before,
+.faq::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.faq::before {
+  width: 360px;
+  height: 360px;
+  top: -230px;
+  right: -130px;
+  border: 1px solid rgba(37, 139, 115, 0.13);
+  box-shadow: 0 0 0 46px rgba(37, 139, 115, 0.025);
+}
+
+.faq::after {
+  width: 230px;
+  height: 230px;
+  bottom: -165px;
+  left: -80px;
+  background: rgba(232, 95, 71, 0.045);
+}
+
+.faq .faq-grid {
+  position: relative;
+  z-index: 1;
+  grid-template-columns: minmax(270px, 0.72fr) minmax(0, 1.28fr);
+  gap: 54px;
+  align-items: start;
+}
+
+.faq-grid > div:first-child {
+  position: sticky;
+  top: 110px;
+  padding: 34px;
+  border-radius: 22px;
+  color: #fff;
+  background: linear-gradient(145deg, #10233f, #1c3b5f);
+  box-shadow: 0 22px 48px rgba(16, 35, 63, 0.18);
+}
+
+.faq-grid > div:first-child .kicker {
+  color: #83d8bf;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.faq-grid > div:first-child h2 {
+  color: #fff;
+  font-size: 38px;
+  font-weight: 900;
+  line-height: 1.45;
+  margin: 13px 0 12px;
+}
+
+.faq-grid > div:first-child > p {
+  color: #c6d1dc;
+  font-size: 14px;
+  line-height: 2;
+}
+
+.faq-grid > div:first-child .faq-more {
+  margin-top: 24px;
+  padding: 11px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  transition: background 0.2s, transform 0.2s;
+}
+
+.faq-grid > div:first-child .faq-more:hover {
+  background: rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+.faq-grid > div:last-child {
+  display: grid;
+  gap: 12px;
+}
+
+.faq-grid > div:last-child article {
+  overflow: hidden;
+  border: 1px solid #e3e5e1;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 7px 22px rgba(16, 35, 63, 0.045);
+  transition: border-color 0.25s, box-shadow 0.25s, transform 0.25s;
+}
+
+.faq-grid > div:last-child article:hover {
+  transform: translateY(-2px);
+  border-color: #cbded8;
+  box-shadow: 0 13px 30px rgba(16, 35, 63, 0.08);
+}
+
+.faq-grid > div:last-child article.open {
+  border-color: rgba(37, 139, 115, 0.5);
+  box-shadow: 0 14px 34px rgba(37, 139, 115, 0.11);
+}
+
+.faq article button {
+  min-height: 68px;
+  padding: 17px 20px;
+  gap: 18px;
+  text-align: right;
+  background: transparent;
+}
+
+.faq article button b {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.8;
+}
+
+.faq article button > span {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: #14785f;
+  background: #eaf6f2;
+}
+
+.faq article button > span > span {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.faq article.open button {
+  color: #126f59;
+  background: linear-gradient(90deg, rgba(234, 246, 242, 0), rgba(234, 246, 242, 0.7));
+}
+
+.faq article.open button > span {
+  color: #fff;
+  background: #258b73;
+}
+
+.faq article p {
+  margin: 0 20px;
+  padding: 0 0 20px;
+  color: #596873;
+  font-size: 13px;
+  line-height: 2.15;
+}
+
+@media (max-width: 900px) {
+  .faq .faq-grid {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
+
+  .faq-grid > div:first-child {
+    position: static;
+  }
+}
+
+@media (max-width: 600px) {
+  .faq-grid > div:first-child {
+    padding: 25px 22px;
+    border-radius: 17px;
+  }
+
+  .faq-grid > div:first-child h2 {
+    font-size: 30px;
+  }
+
+  .faq article button {
+    min-height: 64px;
+    padding: 15px;
+  }
+
+  .faq article button b {
+    font-size: 13px;
+  }
+
+  .faq article p {
+    margin: 0 15px;
+    font-size: 12px;
+  }
+}

@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: khodroto-demo
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: node server.js
+    healthCheckPath: /api/stats/public
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DIVAR_PROVIDER
+        value: web
+      - key: DIVAR_CITY_IDS
+        value: "1"
+      - key: DIVAR_WEB_CATEGORY
+        value: light
+      - key: DIVAR_CACHE_TTL_MINUTES
+        value: "10"
+      - key: DIVAR_MAX_PAGES
+        value: "0"
+      - key: DIVAR_HARD_MAX_PAGES
+        value: "500"
+      - key: DATABASE_FILE
+        value: /tmp/khodroto.db
+      - key: DIVAR_CACHE_FILE
+        value: /tmp/divar-cache.json
+      - key: CREDENTIALS_ENCRYPTION_KEY
+        generateValue: true
+      - key: ADMIN_PHONE
+        sync: false
