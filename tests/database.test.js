@@ -78,6 +78,18 @@ describe('listing lifecycle', () => {
     })
   })
 
+  it('seeds and manages homepage slides with an audit trail', () => {
+    const store = database()
+    expect(store.slides(true)).toHaveLength(3)
+    store.saveSlide({ title: 'بنر تازه', subtitle: 'متن', image: '/banner.jpg', enabled: true, sort_order: 4 })
+    const created = store.slides().find(slide => slide.title === 'بنر تازه')
+    expect(created).toMatchObject({ enabled: true, sort_order: 4 })
+    store.audit(null, 'create', 'slide', created.id, { title: created.title })
+    expect(store.audits()[0]).toMatchObject({ action: 'create', entity: 'slide' })
+    store.deleteSlide(created.id)
+    expect(store.slides()).toHaveLength(3)
+  })
+
   it('stores unlimited active payment and SMS integrations without exposing secrets', () => {
     const store = database()
     store.saveIntegration('payment', { name: 'درگاه اصلی', provider: 'zarinpal', secret: 'merchant-secret', enabled: true, priority: 1, config: { merchantId: 'm-1' } })

@@ -12,6 +12,8 @@ import './motion.css'
 import './search.css'
 import './info-pages.css'
 import './admin-integrations.css'
+import './admin-console.css'
+import './slider.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
@@ -38,6 +40,8 @@ function Hero({stats}){ const values=stats||{analyzedToday:0,totalListings:0,gol
   <div className="floating-card"><span className="pulse"/><div><b>فرصت تازه پیدا شد</b><small>پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار</small></div><strong>۹۱</strong></div>
   <div className="image-stat"><small>آمار زنده خودروتو</small><div><b>{num(values.analyzedToday)}</b><span>بررسی‌شده امروز</span></div><div><b>{num(values.totalListings)}</b><span>کل آگهی‌های پلتفرم</span></div><div className="golden"><b>{num(values.goldenOpportunities)}</b><span>فرصت خرید طلایی</span></div></div></div></section>
   </div></main> }
+
+function MarketSlider(){const[slides,setSlides]=useState([]),[active,setActive]=useState(0);useEffect(()=>{fetch('/api/content/slides').then(r=>r.json()).then(data=>setSlides(data.items||[])).catch(()=>{})},[]);useEffect(()=>{if(slides.length<2)return;const timer=window.setInterval(()=>setActive(index=>(index+1)%slides.length),6500);return()=>window.clearInterval(timer)},[slides.length]);if(!slides.length)return null;return <section className="market-slider-wrap"><div className="wrap"><div className="market-slider">{slides.map((slide,index)=><article key={slide.id} className={`${index===active?'active':''} theme-${slide.theme}`} style={{backgroundImage:`linear-gradient(90deg,rgba(7,18,34,.08),rgba(7,18,34,.92)),url(${slide.image})`}}><div><span><Sparkles/>{slide.badge}</span><h2>{slide.title}</h2><p>{slide.subtitle}</p><a className="primary" href={slide.cta_link||'/cars'}>{slide.cta_text||'مشاهده'} <ArrowLeft/></a></div></article>)}<div className="slider-controls"><button onClick={()=>setActive(index=>(index-1+slides.length)%slides.length)} aria-label="اسلاید قبلی">‹</button><div>{slides.map((slide,index)=><button key={slide.id} className={index===active?'active':''} onClick={()=>setActive(index)} aria-label={`اسلاید ${index+1}`}/>)}</div><button onClick={()=>setActive(index=>(index+1)%slides.length)} aria-label="اسلاید بعدی">›</button></div></div></div></section>}
 
 function SearchPanel({onSearch}){
  const initial={category:'light',city:'1',brand:'همه برندها',model:'',query:'',budget:'همه قیمت‌ها',year:'همه سال‌ها',maxUsage:'',gearbox:'',body:''}
@@ -107,7 +111,7 @@ function App(){
   if(path==='/admin')return <><AdminPage/>{overlays}</>
   if(infoPaths.includes(path))return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><InfoPage path={path} onToast={showToast}/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
   if(path!=='/')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><NotFoundPage/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
-  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats}/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
+  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats}/><MarketSlider/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)
