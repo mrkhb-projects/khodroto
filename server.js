@@ -76,6 +76,7 @@ app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
 app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plans={pro:199000,dealer:499000},plan=String(req.body.plan||'');if(!plans[plan])return res.status(400).json({error:'INVALID_PLAN'});res.json({subscription:store.subscribe(req.user.id,plan,plans[plan]),mode:process.env.PAYMENT_GATEWAY?'gateway':'sandbox'})})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
+app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings();res.json({site_name:s.site_name,site_tagline:s.site_tagline,support_phone:s.support_phone,support_email:s.support_email,maintenance_mode:s.maintenance_mode})})
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
 app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))

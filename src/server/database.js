@@ -4,6 +4,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 
 const now=()=>new Date().toISOString()
+const tehranDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tehran',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const json=value=>JSON.stringify(value??null)
 export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db'){
  fs.mkdirSync(path.dirname(file),{recursive:true});const db=new DatabaseSync(file);db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;')
@@ -12,6 +13,7 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  CREATE TABLE IF NOT EXISTS sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL,expires_at INTEGER NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS listings(token TEXT PRIMARY KEY,title TEXT,city TEXT,price INTEGER,market INTEGER,score INTEGER,payload TEXT,first_seen_at TEXT,last_seen_at TEXT,category TEXT DEFAULT 'light',crawl_scope TEXT DEFAULT 'web:light:1',status TEXT DEFAULT 'active',missing_count INTEGER DEFAULT 0,last_verified_at TEXT,inactive_at TEXT,removed_at TEXT);
  CREATE TABLE IF NOT EXISTS price_history(id INTEGER PRIMARY KEY,token TEXT NOT NULL,price INTEGER NOT NULL,recorded_at TEXT NOT NULL,UNIQUE(token,price,recorded_at));
+ CREATE TABLE IF NOT EXISTS listing_observations(token TEXT NOT NULL,observed_date TEXT NOT NULL,category TEXT DEFAULT 'light',PRIMARY KEY(token,observed_date));
  CREATE TABLE IF NOT EXISTS alerts(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,title TEXT NOT NULL,filters TEXT NOT NULL,enabled INTEGER DEFAULT 1,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS saved_searches(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,title TEXT NOT NULL,filters TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS subscriptions(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,plan TEXT NOT NULL,status TEXT NOT NULL,amount INTEGER NOT NULL,started_at TEXT,expires_at TEXT,created_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
@@ -31,10 +33,11 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
   const hist=db.prepare('INSERT OR IGNORE INTO price_history(token,price,recorded_at) VALUES(?,?,?)')
   db.exec('CREATE TEMP TABLE IF NOT EXISTS crawl_seen_tokens(token TEXT PRIMARY KEY)')
   const seen=db.prepare('INSERT OR IGNORE INTO crawl_seen_tokens(token) VALUES(?)')
+  const observation=db.prepare('INSERT OR IGNORE INTO listing_observations(token,observed_date,category) VALUES(?,?,?)')
   db.exec('BEGIN')
   try{
    db.exec('CREATE TEMP TABLE IF NOT EXISTS crawl_seen_tokens(token TEXT PRIMARY KEY);DELETE FROM crawl_seen_tokens;')
-   for(const token of observed)seen.run(token)
+   for(const token of observed){seen.run(token);observation.run(token,tehranDate(),category)}
    for(const item of items){if(!item?.id)continue;up.run(item.id,item.title,item.city,item.price,item.market,item.score,json(item),stamp,stamp,category,scope,stamp);hist.run(item.id,item.price,stamp.slice(0,16))}
    db.prepare(`UPDATE listings SET last_seen_at=?,last_verified_at=?,missing_count=0,status='active',inactive_at=NULL,removed_at=NULL WHERE token IN (SELECT token FROM crawl_seen_tokens)`).run(stamp,stamp)
    if(options.reconcile){
@@ -47,10 +50,20 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  function storeListings(items=[]){return storeCrawl({items},{reconcile:false})}
  function verificationCandidates(category='light',limit=25){return db.prepare(`SELECT token,status,missing_count FROM listings WHERE category=? AND status IN ('stale','inactive') ORDER BY missing_count DESC,last_seen_at ASC LIMIT ?`).all(category,limit)}
  function markListingVerification(token,state){const stamp=now();if(state==='removed')return db.prepare(`UPDATE listings SET status='removed',removed_at=COALESCE(removed_at,?),last_verified_at=? WHERE token=?`).run(stamp,stamp,token);if(state==='active')return db.prepare(`UPDATE listings SET status='active',missing_count=0,last_seen_at=?,last_verified_at=?,inactive_at=NULL,removed_at=NULL WHERE token=?`).run(stamp,stamp,token)}
+ function publicStats(){
+  const today=tehranDate()
+  return{
+   analyzedToday:db.prepare('SELECT COUNT(*) n FROM listing_observations WHERE observed_date=?').get(today).n,
+   totalListings:db.prepare('SELECT COUNT(*) n FROM listings').get().n,
+   goldenOpportunities:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active' AND score>=85").get().n,
+   activeListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active'").get().n,
+   date:today,
+  }
+ }
  function requestOtp(phone){const code=String(Math.floor(10000+Math.random()*90000));db.prepare('INSERT INTO otp_codes(phone,code_hash,expires_at,attempts) VALUES(?,?,?,0) ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0').run(phone,hash(code),Date.now()+120000);return code}
  function verifyOtp(phone,code){const row=db.prepare('SELECT * FROM otp_codes WHERE phone=?').get(phone);if(!row||row.expires_at<Date.now()||row.attempts>=5)return null;if(row.code_hash!==hash(code)){db.prepare('UPDATE otp_codes SET attempts=attempts+1 WHERE phone=?').run(phone);return null}db.prepare('DELETE FROM otp_codes WHERE phone=?').run(phone);db.prepare('INSERT OR IGNORE INTO users(phone,created_at) VALUES(?,?)').run(phone,now());if(process.env.ADMIN_PHONE===phone||process.env.NODE_ENV!=='production')db.prepare("UPDATE users SET role='admin' WHERE phone=?").run(phone);const user=db.prepare('SELECT * FROM users WHERE phone=?').get(phone),token=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(hash(token),user.id,Date.now()+30*86400000,now());return{user,token}}
  function userFromToken(token){if(!token)return null;return db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hash(token),Date.now())||null}
- return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,requestOtp,verifyOtp,userFromToken,
+ return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,publicStats,requestOtp,verifyOtp,userFromToken,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),

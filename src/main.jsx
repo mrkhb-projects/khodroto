@@ -25,7 +25,7 @@ function Header({onLogin}){
   </nav><div className="nav-actions"><button className="login" onClick={onLogin}>ورود</button><a className="primary small" href="/cars">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
 }
 
-function Hero(){ return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
+function Hero({stats}){ const values=stats||{analyzedToday:0,totalListings:0,goldenOpportunities:0}; return <main id="top" className="hero"><div className="wrap hero-grid"><section className="hero-copy">
   <div className="eyebrow"><Sparkles size={15}/> تحلیل هوشمند آگهی‌های خودرو</div>
   <h1>ماشین خوب را<br/><em>قبل از بقیه</em> پیدا کن.</h1>
   <p>خودروتو آگهی‌های دیوار را بررسی می‌کند، قیمت هر خودرو را با نمونه‌های مشابه می‌سنجد و فرصت‌های واقعی را برایت جدا می‌کند.</p>
@@ -33,7 +33,7 @@ function Hero(){ return <main id="top" className="hero"><div className="wrap her
   <div className="trust"><span><Check/> بدون آگهی تکراری</span><span><Check/> قیمت‌گذاری شفاف</span><span><Check/> لینک مستقیم به دیوار</span></div>
   </section><section className="hero-visual"><div className="hero-image"><img src="/khodroto-market-banner.jpg" alt="مجموعه خودروهای منتخب خودروتو"/>
   <div className="floating-card"><span className="pulse"/><div><b>فرصت تازه پیدا شد</b><small>پژو ۲۰۷ · ۱۲٪ زیر قیمت بازار</small></div><strong>۹۱</strong></div>
-  <div className="image-stat"><b>۲٬۴۸۶</b><span>آگهی بررسی‌شده امروز</span></div></div></section>
+  <div className="image-stat"><small>آمار زنده خودروتو</small><div><b>{num(values.analyzedToday)}</b><span>بررسی‌شده امروز</span></div><div><b>{num(values.totalListings)}</b><span>کل آگهی‌های پلتفرم</span></div><div className="golden"><b>{num(values.goldenOpportunities)}</b><span>فرصت خرید طلایی</span></div></div></div></section>
   </div></main> }
 
 function SearchPanel({onSearch}){
@@ -81,7 +81,7 @@ function ActionModal({type,onClose,onDone}){
 }
 
 function App(){
-  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null)
+  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null),[marketStats,setMarketStats]=useState(null)
   function showToast(message){setToast(message);window.clearTimeout(showToast.timer);showToast.timer=window.setTimeout(()=>setToast(''),3200)}
   async function loadListings(nextFilters=filters,limit=6){
     setLoading(true)
@@ -93,7 +93,7 @@ function App(){
     }catch{setStatus('demo');setNotice('دریافت اطلاعات ممکن نشد؛ داده نمونه نمایش داده می‌شود.')}
     finally{setLoading(false)}
   }
-  useEffect(()=>{if(window.location.pathname==='/'||window.location.pathname==='')loadListings({},6)},[])
+  useEffect(()=>{if(window.location.pathname==='/'||window.location.pathname===''){loadListings({},6);const loadStats=()=>fetch('/api/stats/public').then(r=>r.json()).then(setMarketStats).catch(()=>{});loadStats();const timer=window.setInterval(loadStats,60000);return()=>window.clearInterval(timer)}},[])
   function search(nextFilters){setFilters(nextFilters);loadListings(nextFilters,6);showToast('فیلترها اعمال شدند؛ بهترین فرصت‌ها مرتب شدند.');document.querySelector('#opportunities')?.scrollIntoView({behavior:'smooth'})}
   function loadMore(){loadListings(filters,Math.min(200,cars.length+12))}
   const path=window.location.pathname.replace(/\/$/,'')||'/'
@@ -102,7 +102,7 @@ function App(){
   if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
   if(path==='/admin')return <><AdminPage/>{overlays}</>
-  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
+  return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><Hero stats={marketStats}/><SearchPanel onSearch={search}/><Opportunities cars={cars} status={status} notice={notice} loading={loading} total={total} onLoadMore={loadMore} onToast={showToast}/><CampaignBanner/><Method/><Score/><FAQ/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
 }
 
 createRoot(document.getElementById('root')).render(<App/>)

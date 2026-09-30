@@ -61,4 +61,20 @@ describe('listing lifecycle', () => {
     store.storeCrawl({ category: 'light', items: [item('a')] }, { category: 'light', reconcile: false })
     expect(row(store, 'b')).toMatchObject({ status: 'active', missing_count: 0 })
   })
+
+  it('reports real daily, total, and golden-opportunity counts', () => {
+    const store = database()
+    store.storeCrawl({
+      category: 'light',
+      items: [{ ...item('golden'), score: 91 }],
+      observedTokens: ['golden', 'excluded-without-photo'],
+    }, { category: 'light', reconcile: true })
+
+    expect(store.publicStats()).toMatchObject({
+      analyzedToday: 2,
+      totalListings: 1,
+      goldenOpportunities: 1,
+      activeListings: 1,
+    })
+  })
 })
