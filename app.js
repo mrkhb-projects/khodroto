@@ -89,13 +89,23 @@ function openModal(type, payload) {
     html = `<div class="ad-modal-top"><div class="ad-modal-image" style="background-image:url('${item.image}')"></div><div><span class="section-kicker">تحلیل آگهی</span><h2 id="modal-title">${item.title}</h2><p>مدل ${fa(item.year)} · ${formatMoney(item.mileage * 1000)} کیلومتر · ${cityName(item.city)}</p></div></div><div class="price-analysis"><div><span>قیمت آگهی</span><b>${formatMoney(item.price)} م.ت</b></div><div><span>میانهٔ بازار</span><b>${formatMoney(item.market)} م.ت</b></div><div><span>اختلاف</span><b>${fa(item.discount)}٪ پایین‌تر</b></div></div><div class="method-stat"><strong>${fa(item.score)}</strong><span>امتیاز فرصت<br><b>${scoreName(item.score)}</b> با مقایسهٔ ${fa(item.sample)} آگهی مشابه</span></div><p class="ad-note">این امتیاز فقط به قیمت مربوط است. پیش از هر تصمیم، سلامت فنی، بدنه و اصالت مدارک خودرو را بررسی کن.</p><button class="button button-dark full" data-toast="در نسخهٔ محصول، لینک مستقیم به آگهیِ منبع اینجا نمایش داده می‌شود.">مشاهدهٔ آگهیِ منبع <span>↗</span></button>`;
   }
   modalContent.innerHTML = html;
+  // Use an explicit state class as well as `hidden` so the modal is never left
+  // visible by a component display rule or a browser cache edge case.
   modalBackdrop.hidden = false;
+  modalBackdrop.classList.add('is-open');
+  modalBackdrop.setAttribute('aria-hidden', 'false');
   modalBackdrop.querySelector('.modal').classList.toggle('wide', wide);
   document.body.classList.add('modal-open');
   const firstInput = modalContent.querySelector('input, textarea, select');
   if (firstInput) setTimeout(() => firstInput.focus(), 50);
 }
-function closeModal() { modalBackdrop.hidden = true; document.body.classList.remove('modal-open'); modalContent.innerHTML = ''; }
+function closeModal() {
+  modalBackdrop.classList.remove('is-open');
+  modalBackdrop.hidden = true;
+  modalBackdrop.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  modalContent.innerHTML = '';
+}
 function applyFilters() {
   const city = document.getElementById('city').value;
   const model = document.getElementById('model').value;
@@ -152,6 +162,11 @@ document.addEventListener('click', event => {
 });
 
 modalContent.addEventListener('submit', event => { if (!event.target.matches('form')) return; event.preventDefault(); const kind = event.target.dataset.form; closeModal(); toastMessage(kind === 'feedback' ? 'بازخوردت برای بررسی ثبت شد؛ ممنون!' : kind === 'watch' ? 'در فهرست انتظار ثبت شد. در نسخهٔ اصلی اطلاع می‌دهیم.' : 'ورود نمایشی با موفقیت انجام شد.'); });
+// Keep the close control local to the overlay as well as in the delegated page handler.
+// This makes the × and backdrop reliable on both desktop and touch previews.
+modalBackdrop.addEventListener('click', event => {
+  if (event.target === modalBackdrop || event.target.closest('.modal-close')) closeModal();
+});
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && !modalBackdrop.hidden) closeModal(); });
 
 const menuButton = document.querySelector('.menu-button');
