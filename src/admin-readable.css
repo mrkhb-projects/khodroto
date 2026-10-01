@@ -1,0 +1,90 @@
+/* Readable administration type scale — replaces the former 8–10px console text. */
+.admin-shell { font-size: 14px; }
+.admin-sidebar { width: 270px; }
+.admin-shell { grid-template-columns: 270px 1fr; }
+.admin-sidebar-brand b { font-size: 20px; font-weight: 900; }
+.admin-sidebar-brand span { font-size: 12px; }
+.admin-sidebar nav button { min-height: 47px; padding: 12px 14px; font-size: 14px; font-weight: 700; }
+.admin-sidebar nav button i { font-size: 11px; padding: 2px 7px; }
+.admin-sidebar-foot > span, .admin-sidebar-foot a { font-size: 12px; line-height: 1.7; }
+.admin-topbar { height: 94px; }
+.admin-topbar span { font-size: 12px; }
+.admin-topbar h1 { font-size: 25px; font-weight: 900; }
+.admin-top-actions > button, .admin-menu { min-height: 40px; font-size: 12px; font-weight: 800; }
+.admin-warning, .admin-success { min-height: 48px; padding: 13px 16px; border-radius: 11px; display: flex; align-items: center; gap: 9px; margin-bottom: 17px; font-size: 13px; font-weight: 700; line-height: 1.8; }
+.admin-warning svg, .admin-success svg { width: 20px; min-width: 20px; }
+.admin-success { color: #17634f; background: #e9f8f2; border: 1px solid #bfe5d8; }
+.admin-kpis article { min-height: 92px; padding: 18px; }
+.admin-kpis article > span { width: 46px; height: 46px; }
+.admin-kpis svg { width: 22px; }
+.admin-kpis small { font-size: 12px; }
+.admin-kpis b { font-size: 27px; font-weight: 900; }
+.admin-kpis em { margin-top: 2px; font-size: 11px; }
+.admin-panel { padding: 23px; }
+.admin-panel-title h2 { font-size: 19px; font-weight: 900; }
+.admin-panel-title p { font-size: 12px; line-height: 1.8; }
+.admin-panel-title button { padding: 9px 13px; font-size: 11px; font-weight: 800; }
+.market-legend span { font-size: 12px; }
+.golden-summary span { font-size: 13px; font-weight: 800; }
+.golden-summary b { font-size: 29px; }
+.golden-summary small { font-size: 11px; }
+.collector-ring > div { width: 142px; height: 142px; }
+.collector-ring svg { width: 27px; }
+.collector-ring b { font-size: 18px; font-weight: 900; }
+.collector-ring small { font-size: 11px; }
+.collector-health li { min-height: 39px; align-items: center; padding: 9px 0; font-size: 12px; }
+.collector-health li b { font-weight: 900; }
+.collector-health .collector-error b { color: #b54235; direction: ltr; }
+.collector-health .admin-crawl { min-height: 50px; padding: 12px; font-size: 13px; }
+.quick-admin > div > button { min-height: 54px; padding: 15px; font-size: 13px; font-weight: 800; }
+.admin-list-tools { min-height: 60px; padding: 12px 15px; }
+.admin-list-tools input, .admin-list-tools select, .admin-table select { height: 42px; font-size: 12px; }
+.admin-list-tools > span { font-size: 12px; }
+.admin-table th { padding: 15px 13px; font-size: 11px; font-weight: 900; }
+.admin-table td { padding: 14px 13px; font-size: 12px; line-height: 1.7; }
+.admin-badge { padding: 5px 10px; font-size: 11px; font-weight: 800; }
+.table-action, .table-actions button, .table-actions select { min-height: 34px; font-size: 11px; }
+.table-actions a { font-size: 11px; font-weight: 800; }
+.listing-admin-title b { font-size: 13px; }
+.listing-admin-title small { font-size: 11px; }
+.ticket-message { max-width: 360px; font-size: 12px; }
+.content-admin-head h2 { font-size: 21px; font-weight: 900; }
+.content-admin-head p { font-size: 12px; }
+.slide-preview span { font-size: 12px; }
+.slide-preview h3 { font-size: 27px; }
+.slide-preview p { font-size: 12px; }
+.slide-fields label, .admin-settings label { font-size: 12px; font-weight: 700; }
+.slide-fields input, .slide-fields textarea, .slide-fields select { min-height: 44px; font-size: 12px; }
+.slide-thumb span { font-size: 11px; }
+.slide-thumb b { font-size: 15px; }
+.slides-admin-grid small, .slides-admin-grid footer button { font-size: 11px; }
+.admin-settings input:not([type=checkbox]), .admin-settings select { min-height: 44px; font-size: 12px; }
+.admin-settings-group > p, .admin-ticker-field small { font-size: 11px; }
+
+/* Payment/SMS integration manager */
+.credentials-notice b, .integration-card header b, .integration-empty b { font-size: 15px; }
+.credentials-notice span { font-size: 12px; }
+.integration-fields label, .integration-enabled { font-size: 12px; }
+.integration-fields input, .integration-fields select { height: 46px; font-size: 12px; }
+.integration-card header span, .integration-meta { font-size: 11px; }
+.integration-state, .integration-card > footer button { font-size: 11px; }
+.integration-empty span { font-size: 12px; }
+.integration-actions small { font-size: 11px; }
+
+@media (max-width: 850px) {
+  .admin-shell { display: block; }
+  .admin-sidebar { width: 275px; }
+  .admin-topbar h1 { font-size: 21px; }
+  .admin-topbar span { font-size: 11px; }
+}
+
+@media (max-width: 520px) {
+  .admin-canvas { padding: 13px; }
+  .admin-kpis article { min-height: 82px; padding: 12px; }
+  .admin-kpis small { font-size: 11px; }
+  .admin-kpis b { font-size: 21px; }
+  .admin-kpis em { font-size: 10px; }
+  .admin-panel { padding: 17px; }
+  .admin-panel-title h2 { font-size: 17px; }
+  .admin-table td { font-size: 12px; }
+}
