@@ -136,12 +136,12 @@ app.get('/api/listings', async (req, res) => {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
     res.status(200).json({
-      source: 'demo',
-      items: applyBudget(fallbackCars, String(req.query.budget || '')).slice(0, Math.min(200, Math.max(1, Number(req.query.limit) || 6))),
-      totalMatches: applyBudget(fallbackCars, String(req.query.budget || '')).length,
+      source: process.env.NODE_ENV==='production'?'unavailable':'demo',
+      items: process.env.NODE_ENV==='production'?[]:applyBudget(fallbackCars, String(req.query.budget || '')).slice(0, Math.min(200, Math.max(1, Number(req.query.limit) || 6))),
+      totalMatches: process.env.NODE_ENV==='production'?0:applyBudget(fallbackCars, String(req.query.budget || '')).length,
       notice: known && error.code === 'NOT_CONFIGURED'
-        ? 'برای فعال‌شدن داده زنده، کلید رسمی کنار دیوار باید در محیط سرور تنظیم شود.'
-        : 'ارتباط با دیوار موقتاً برقرار نشد؛ داده نمونه نمایش داده می‌شود.',
+        ? 'اتصال داده واقعی دیوار روی سرور تنظیم نشده است.'
+        : process.env.NODE_ENV==='production'?'اتصال سرور به دیوار برقرار نیست؛ برای جلوگیری از نمایش اطلاعات غیرواقعی، داده نمونه مخفی شده است.':'ارتباط با دیوار موقتاً برقرار نشد؛ داده نمونه صرفاً برای پیش‌نمایش توسعه نمایش داده می‌شود.',
       integration: { ...divar.status(), errorCode: error.code || 'UNKNOWN' },
     })
   }

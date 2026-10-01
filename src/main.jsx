@@ -94,7 +94,7 @@ function ActionModal({type,onClose,onDone}){
 }
 
 function App(){
-  const [cars,setCars]=useState(fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null),[marketStats,setMarketStats]=useState(null),[siteSettings,setSiteSettings]=useState({})
+  const [cars,setCars]=useState(()=>import.meta.env.PROD?[]:fallbackCars),[status,setStatus]=useState('demo'),[notice,setNotice]=useState(''),[loading,setLoading]=useState(true),[toast,setToast]=useState(''),[total,setTotal]=useState(fallbackCars.length),[filters,setFilters]=useState({}),[modal,setModal]=useState(null),[marketStats,setMarketStats]=useState(null),[siteSettings,setSiteSettings]=useState({})
   function showToast(message){setToast(message);window.clearTimeout(showToast.timer);showToast.timer=window.setTimeout(()=>setToast(''),3200)}
   async function loadListings(nextFilters=filters,limit=6){
     setLoading(true)
