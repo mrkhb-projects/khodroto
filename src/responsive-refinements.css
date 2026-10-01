@@ -10,6 +10,9 @@ button, .primary, .secondary { font-weight: 800; }
 .result-price b { font-size: 14px; font-weight: 900; }
 .specs, .result-specs { font-size: 11px; font-weight: 600; }
 
+.auth-entry { white-space: nowrap; }
+.dashboard-entry { color: var(--green); font-weight: 900; }
+
 .search-button {
   min-width: 142px;
   white-space: nowrap;
@@ -128,6 +131,10 @@ button, .primary, .secondary { font-weight: 800; }
 .admin-settings-group > label { margin-top: 12px; max-width: 240px; }
 .admin-ticker-field textarea { width: 100%; margin-top: 7px; padding: 10px; border: 1px solid #d9dddf; border-radius: 8px; resize: vertical; font: inherit; line-height: 1.8; }
 .admin-ticker-field small { display: block; margin-top: 4px; color: #89929b; }
+
+@media (max-width: 900px) {
+  .nav-actions .auth-entry { display: inline-flex; align-items: center; padding: 8px 10px; font-size: 12px; }
+}
 
 @media (max-width: 700px) {
   .hero-image { overflow: hidden; }
