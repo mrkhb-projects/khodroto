@@ -77,7 +77,11 @@ jobs:
           protocol: ftps
           security: loose
           local-dir: deploy-out/
-          server-dir: repositories/khodroto/
+          # The FTP account logs in directly inside the application root
+          # (~/repositories/khodroto), so "./" targets the app directory itself.
+          # If your FTP account starts at the account home instead, use
+          # repositories/khodroto/ here.
+          server-dir: ./
           # Uploads only the files inside deploy-out/ and never touches anything else
           # on the host: data/, .env and node_modules/ are neither uploaded nor deleted
           # (they never enter the action's sync state, and deletions only apply to
