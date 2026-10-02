@@ -158,3 +158,7 @@ PATCH                   /api/admin/subscriptions/:id
 ## مسیر اختصاصی مدیریت و داده آنلاین
 
 ورود مدیریت از مسیر `/khodroto-admin` و با متغیرهای سروری `ADMIN_PHONE` و `ADMIN_PASSWORD` انجام می‌شود. راه‌اندازی اتصال مستقیم ایران، رله خصوصی برای Render و عیب‌یابی وضعیت واقعی collector در [ONLINE_SETUP.md](ONLINE_SETUP.md) توضیح داده شده است.
+
+### اتصال مستقیم دیوار با سایت جهانی
+
+برای اجرای frontend/backend روی میزبان جهانی و عبور فقط ترافیک جمع‌آوری از رله خصوصی ایران، راهنمای [GLOBAL_DIVAR_DEPLOYMENT.md](GLOBAL_DIVAR_DEPLOYMENT.md) و فایل‌های آماده `docker-compose.relay.yml`، `deploy/relay.Dockerfile` و `deploy/relay-nginx.conf` را ببینید. این معماری به «کنار» وابسته نیست.

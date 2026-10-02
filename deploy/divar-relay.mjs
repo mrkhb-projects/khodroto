@@ -9,6 +9,7 @@ if (token.length < 24) throw new Error('DIVAR_RELAY_TOKEN must contain at least 
 app.disable('x-powered-by')
 app.set('trust proxy', 1)
 app.use(express.json({ limit: '512kb' }))
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'khodroto-divar-relay' }))
 
 const safeEqual = (left, right) => {
   const a = Buffer.from(String(left || ''))
@@ -52,7 +53,6 @@ app.get('/v8/posts-v2/web/:token', (req, res) => {
   return forward(req, res, `https://api.divar.ir/v8/posts-v2/web/${encodeURIComponent(req.params.token)}`, { method: 'GET' })
 })
 
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'khodroto-divar-relay' }))
 app.use((_req, res) => res.status(404).json({ error: 'NOT_FOUND' }))
 
 app.listen(port, '0.0.0.0', () => console.log(`Khodroto Divar relay listening on 0.0.0.0:${port}`))

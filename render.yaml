@@ -12,6 +12,12 @@ services:
         value: production
       - key: DIVAR_PROVIDER
         value: web
+      # Required for real data when Render's foreign egress cannot reach Divar.
+      # Enter the HTTPS origin of your private Iran relay (no trailing path).
+      - key: DIVAR_API_BASE_URL
+        sync: false
+      - key: DIVAR_RELAY_TOKEN
+        sync: false
       - key: DIVAR_CITY_IDS
         value: "1"
       - key: DIVAR_WEB_CATEGORY
