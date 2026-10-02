@@ -88,3 +88,5 @@
   .admin-panel-title h2 { font-size: 17px; }
   .admin-table td { font-size: 12px; }
 }
+.admin-feature-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px!important}.admin-feature-grid .maintenance{margin:0!important;background:#f5f8f7;border:1px solid #dce6e2;border-radius:10px;padding:12px!important}@media(max-width:650px){.admin-feature-grid{grid-template-columns:1fr}}
+.admin-plans-editor{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.admin-plans-editor article{border:1px solid #dfe5e2;border-radius:14px;padding:18px;background:#fff}.admin-plans-editor label{display:flex;flex-direction:column;gap:6px;margin:10px 0;font-size:13px;font-weight:800}.admin-plans-editor input,.admin-plans-editor textarea{border:1px solid #d9dfdc;border-radius:9px;padding:11px;font:inherit}.plan-admin-head{display:flex;align-items:center;justify-content:space-between}.plan-admin-head>b{direction:ltr;color:#16775f}.admin-plans-editor .maintenance{flex-direction:row}.admin-plans-editor button{width:100%;justify-content:center}@media(max-width:1000px){.admin-plans-editor{grid-template-columns:1fr}}

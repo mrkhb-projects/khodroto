@@ -90,6 +90,18 @@ describe('listing lifecycle', () => {
     expect(store.slides()).toHaveLength(3)
   })
 
+  it('persists managed public settings and subscription plans', () => {
+    const store = database()
+    expect(store.settings()).toMatchObject({ feature_comparison: 'true', section_faq: 'true' })
+    store.updateSettings({ section_faq: 'false', hero_title: 'عنوان تازه', unknown_key: 'ignored' })
+    expect(store.settings()).toMatchObject({ section_faq: 'false', hero_title: 'عنوان تازه' })
+    expect(store.settings().unknown_key).toBeUndefined()
+
+    expect(store.plans(true).map(plan => plan.id)).toEqual(['free', 'pro', 'dealer'])
+    store.savePlan('pro', { name: 'پرو ویژه', price: 250000, description: 'جدید', features: ['تحلیل بازار'], enabled: true, popular: true, sort_order: 2 })
+    expect(store.plans().find(plan => plan.id === 'pro')).toMatchObject({ name: 'پرو ویژه', price: 250000, features: ['تحلیل بازار'], enabled: true })
+  })
+
   it('stores unlimited active payment and SMS integrations without exposing secrets', () => {
     const store = database()
     store.saveIntegration('payment', { name: 'درگاه اصلی', provider: 'zarinpal', secret: 'merchant-secret', enabled: true, priority: 1, config: { merchantId: 'm-1' } })
