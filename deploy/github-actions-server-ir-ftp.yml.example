@@ -1,0 +1,85 @@
+name: Deploy to Server.ir (FTP)
+
+on:
+  push:
+    branches:
+      - main
+      - arena/01a0fd65-khodroto
+  workflow_dispatch:
+
+concurrency:
+  # FTP transfers must not overlap; a cancelled transfer could leave the host half-updated.
+  group: server-ir-ftp-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-deploy:
+    name: Build, test and deploy over FTP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify FTP secrets exist
+        env:
+          SERVER_IR_FTP_HOST: ${{ secrets.SERVER_IR_FTP_HOST }}
+          SERVER_IR_FTP_USERNAME: ${{ secrets.SERVER_IR_FTP_USERNAME }}
+          SERVER_IR_FTP_PASSWORD: ${{ secrets.SERVER_IR_FTP_PASSWORD }}
+          SERVER_IR_FTP_PORT: ${{ secrets.SERVER_IR_FTP_PORT }}
+        run: |
+          missing=0
+          for name in SERVER_IR_FTP_HOST SERVER_IR_FTP_USERNAME SERVER_IR_FTP_PASSWORD SERVER_IR_FTP_PORT; do
+            if [ -z "${!name}" ]; then
+              echo "::error title=Missing GitHub secret::$name is not set (Settings → Secrets and variables → Actions)"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build production bundle into dist/
+        run: npm run build
+
+      - name: Assemble deployment package
+        run: |
+          mkdir -p deploy-out/tmp
+          cp -a server.js package.json package-lock.json src dist deploy-out/
+          # Phusion Passenger watches tmp/restart.txt's mtime in the application root.
+          # A fresh timestamp guarantees the file always changes so it is re-uploaded
+          # on every deploy, which restarts the Node.js application automatically.
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > deploy-out/tmp/restart.txt
+          find deploy-out -maxdepth 1 -mindepth 1 | sort
+
+      - name: Upload application over FTP
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.SERVER_IR_FTP_HOST }}
+          username: ${{ secrets.SERVER_IR_FTP_USERNAME }}
+          password: ${{ secrets.SERVER_IR_FTP_PASSWORD }}
+          port: ${{ secrets.SERVER_IR_FTP_PORT }}
+          # ftps = FTP over explicit TLS. "loose" keeps TLS encryption but accepts the
+          # self-signed/mismatched certificates common on shared cPanel hosts; switch
+          # to "strict" once a valid certificate is served on the FTP hostname.
+          protocol: ftps
+          security: loose
+          local-dir: deploy-out/
+          server-dir: repositories/khodroto/
+          # Uploads only the files inside deploy-out/ and never touches anything else
+          # on the host: data/, .env and node_modules/ are neither uploaded nor deleted
+          # (they never enter the action's sync state, and deletions only apply to
+          # files that the action deployed itself and that were removed later).
+          log-level: standard

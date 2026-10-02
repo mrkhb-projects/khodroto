@@ -71,7 +71,7 @@ CREDENTIALS_ENCRYPTION_KEY=یک-کلید-تصادفی-طولانی
 
 ```bash
 cd ~
-git clone -b arena/01a0f43a-khodroto https://github.com/mrkhb-projects/khodroto.git khodroto
+git clone https://github.com/mrkhb-projects/khodroto.git khodroto
 cd khodroto
 npm ci
 npm run build
@@ -81,18 +81,51 @@ touch tmp/restart.txt
 
 اگر مخزن خصوصی شد، از Deploy Key فقط‌خواندنی استفاده کنید؛ رمز GitHub یا Personal Access Token را داخل فایل‌ها نگذارید.
 
-## ۶. استقرار خودکار از GitHub Actions
+## ۶. استقرار خودکار از GitHub Actions با FTP
 
-به‌دلیل محدودیت دسترسی Workflow در اتصال فعلی GitHub، قالب آماده زیر در پروژه قرار دارد. آن را از طریق رابط GitHub با نام `.github/workflows/deploy-server-ir.yml` ذخیره کنید:
+به‌دلیل محدودیت مجوز `workflows` در اتصال فعلی GitHub، قالب آماده زیر در پروژه قرار دارد؛ همانند قالب SSH آن را از طریق رابط GitHub با نام `.github/workflows/deploy-server-ir-ftp.yml` ذخیره کنید:
+
+```text
+deploy/github-actions-server-ir-ftp.yml.example
+```
+
+در GitHub وارد مسیر `Actions → New workflow → set up a workflow yourself` شوید (یا در شاخه `main` فایل `.github/workflows/deploy-server-ir-ftp.yml` را بسازید) و محتوای فایل قالب را همان‌طور که هست کپی و Commit کنید. پس از ذخیره، با هر Push روی شاخه `main` یا شاخه فعلی Arena (یا اجرای دستی از تب Actions) فعال می‌شود.
+
+چهار Secret زیر در مسیر `Repository → Settings → Secrets and variables → Actions` ساخته شده است:
+
+| نام Secret | مقدار |
+|---|---|
+| `SERVER_IR_FTP_HOST` | نام میزبان یا IP سرور FTP هاست |
+| `SERVER_IR_FTP_USERNAME` | نام کاربری FTP |
+| `SERVER_IR_FTP_PASSWORD` | رمز عبور FTP |
+| `SERVER_IR_FTP_PORT` | پورت FTP؛ معمولاً `21` |
+
+هر اجرای Workflow این مراحل را طی می‌کند:
+
+1. نصب وابستگی‌ها و اجرای تست‌ها؛ در صورت خطا انتشار متوقف می‌شود
+2. Build تولید (`npm run build`) و ساخت پوشه `dist`
+3. آماده‌سازی بسته انتشار در `deploy-out/` شامل `server.js`، `package.json`، `package-lock.json`، `src/`، `dist/` و `tmp/restart.txt`
+4. آپلود تفاضیلی روی FTPS به مسیر `repositories/khodroto/`
+5. Restart خودکار Passenger؛ چون `tmp/restart.txt` در هر اجرا با مهر زمانی تازه آپلود می‌شود و Passenger با تغییر زمان‌نامه آن برنامه Node را Restart می‌کند
+
+### حفاظت از داده و تنظیمات تولید
+
+- فقط محتوای `deploy-out/` آپلود می‌شود؛ پوشه `data` (دیتابیس SQLite و کش دیوار)، فایل `.env` و `node_modules` روی هاست نه آپلود و نه حذف می‌شوند.
+- حالت پاک‌سازی (`dangerous-clean-slate`) خاموش است؛ اکشن فقط فایل‌هایی را حذف می‌کند که قبلاً خودش آپلود کرده و بعداً از مخزن حذف شده‌اند. فایل‌های موجود روی هاست که هرگز توسط Workflow آپلود نشده‌اند (مثل `data/` و `.env`) دست‌نخورده می‌مانند.
+
+### نکته‌های مهم
+
+- نصب پکیج‌ها روی هاست با FTP خودکار نیست؛ اگر `package.json` تغییر کرد، یک‌بار در cPanel از بخش **Setup Node.js App** دکمه **Run NPM Install** را بزنید.
+- پروتکل پیش‌فرض `ftps` است. اگر فقط FTP ساده روی پورت ۲۱ کار می‌کند، مقدار `protocol` را به `ftp` تغییر دهید. اگر فقط SFTP روی پورت ۲۲ در دسترس است، این اکشن مناسب نیست و از نسخه SSH استفاده کنید (بخش ۸).
+- گزینه `security: loose` رمزنگاری TLS را حفظ می‌کند ولی گواهی self-signed رایج روی هاست‌های اشتراکی را قبول می‌کند؛ اگر گواهی معتبر روی میزبان FTP دارید، `strict` کنید.
+- مسیر `server-dir` نسبت به دایرکتوری Home کاربر FTP است. اگر پس از ورود FTP مستقیماً داخل پوشه برنامه قرار می‌گیرید، آن را به `/` تغییر دهید.
+
+## ۶-ب. جایگزین SSH (در صورت فعال‌بودن SSH)
+
+قالب آماده SSH/rsync در مسیر زیر قرار دارد و در صورت دسترسی SSH سریع‌تر و کامل‌تر است، چون `npm ci` هم روی هاست اجرا می‌کند:
 
 ```text
 deploy/github-actions-server-ir.yml.example
-```
-
-در GitHub وارد مسیر زیر شوید:
-
-```text
-Repository → Settings → Secrets and variables → Actions → New repository secret
 ```
 
 این Secretها را بسازید:
@@ -118,7 +151,7 @@ ssh-keygen -t ed25519 -C "github-deploy-bidup" -f bidup_deploy
 - محتوای `bidup_deploy.pub` را در cPanel بخش **SSH Access → Manage SSH Keys** وارد و Authorize کنید.
 - کلید خصوصی را در چت، مخزن یا فایل سایت قرار ندهید.
 
-پس از تنظیم Secretها، هر Push روی شاخه `main` یا شاخه فعلی Arena مراحل زیر را خودکار اجرا می‌کند:
+پس از تنظیم Secretهای SSH و ذخیره قالب به‌عنوان `.github/workflows/deploy-server-ir.yml`، هر Push روی شاخه `main` مراحل زیر را خودکار اجرا می‌کند:
 
 1. نصب وابستگی‌ها
 2. اجرای تست‌ها
@@ -141,19 +174,16 @@ ssh-keygen -t ed25519 -C "github-deploy-bidup" -f bidup_deploy
 کار این جلسه روی شاخه زیر ذخیره می‌شود:
 
 ```text
-arena/01a0f43a-khodroto
+arena/01a0fd65-khodroto
 ```
 
 Workflow فعلی همین شاخه و `main` را دنبال می‌کند. برای محیط تولید پایدار بهتر است پس از تأیید تغییرات، Pull Request را در `main` ادغام کنید و بعد Workflow را فقط روی `main` نگه دارید.
 
-## ۸. اگر SSH ندارید
+## ۸. استقرار بدون SSH
 
-بدون SSH، انتشار کاملاً خودکار برنامه Node قابل اتکا نیست. دو راه دارید:
+بدون SSH همان Workflow فعلی FTP پاسخ‌گوست؛ برنامه کامل Node (API، دیتابیس، ورود، مدیریت و جمع‌آوری دیوار) از مسیر `repositories/khodroto` توسط Passenger اجرا می‌شود و فقط نصب پکیج‌ها پس از تغییر `package.json` یک‌بار از cPanel انجام می‌شود.
 
-1. در cPanel از **Git Version Control** مخزن را Clone کنید، پس از هر تغییر Pull بزنید و Node App را Restart کنید؛ این روش نیمه‌دستی است.
-2. از پشتیبانی Server.ir درخواست فعال‌سازی SSH و Setup Node.js App کنید.
-
-FTP فقط برای نسخه استاتیک مناسب است و API، دیتابیس، ورود، مدیریت و جمع‌آوری دیوار را اجرا نمی‌کند.
+برای تغییرات دستی نیز می‌توانید در cPanel از **Git Version Control** Pull بزنید و سپس Node App را Restart کنید؛ روش خودکار همان FTP است.
 
 ## ۹. تست نهایی
 
