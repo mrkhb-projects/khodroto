@@ -1,5 +1,6 @@
 node_modules/
 dist/
+deploy-out/
 .env
 .DS_Store
 data/divar-cache.json

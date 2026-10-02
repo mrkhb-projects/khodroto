@@ -148,6 +148,15 @@ async function enrichWebItem(item, env, fetchImpl) {
   }
 }
 
+function describeBody(body) {
+  if (body == null) return ''
+  const message = body.message
+  if (typeof message === 'string' && message.trim()) return message.slice(0, 300)
+  if (message && typeof message === 'object') return JSON.stringify(message).slice(0, 300)
+  const serialized = JSON.stringify(body)
+  return serialized && serialized !== '{}' ? serialized.slice(0, 300) : ''
+}
+
 async function jsonRequest(url, options, fetchImpl) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 9000)
@@ -156,7 +165,8 @@ async function jsonRequest(url, options, fetchImpl) {
     const response = await fetchImpl(url, { ...requestOptions, signal: controller.signal })
     const body = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new DivarUpstreamError(body?.message || `Divar responded with ${response.status}`, {
+      const detail = describeBody(body)
+      throw new DivarUpstreamError(`Divar responded with HTTP ${response.status}${detail ? `: ${detail}` : ''}`, {
         status: response.status,
         provider: options.provider,
         code: response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : response.status === 429 ? 'RATE_LIMITED' : 'UPSTREAM_ERROR',
@@ -165,7 +175,8 @@ async function jsonRequest(url, options, fetchImpl) {
     return body
   } catch (error) {
     if (error instanceof DivarUpstreamError) throw error
-    throw new DivarUpstreamError(error.name === 'AbortError' ? 'Divar request timed out' : 'Could not reach Divar', { provider: options.provider })
+    const networkDetail = error.cause?.code || error.code || error.message || 'unknown network error'
+    throw new DivarUpstreamError(error.name === 'AbortError' ? 'Divar request timed out after 9s' : `Could not reach Divar: ${networkDetail}`, { provider: options.provider })
   } finally {
     clearTimeout(timeout)
   }
