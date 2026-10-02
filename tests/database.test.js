@@ -92,10 +92,11 @@ describe('listing lifecycle', () => {
 
   it('persists managed public settings and subscription plans', () => {
     const store = database()
-    expect(store.settings()).toMatchObject({ feature_comparison: 'true', section_faq: 'true' })
-    store.updateSettings({ section_faq: 'false', hero_title: 'عنوان تازه', unknown_key: 'ignored' })
+    expect(store.settings()).toMatchObject({ feature_comparison: 'true', section_faq: 'true', vehicle_brands: expect.stringContaining('ایران خودرو'), backup_schedule: 'daily', notification_master: 'true' })
+    store.updateSettings({ section_faq: 'false', hero_title: 'عنوان تازه', about_content: 'الف'.repeat(400), unknown_key: 'ignored' })
     expect(store.settings()).toMatchObject({ section_faq: 'false', hero_title: 'عنوان تازه' })
     expect(store.settings().unknown_key).toBeUndefined()
+    expect(store.settings().about_content).toHaveLength(1200)
 
     expect(store.plans(true).map(plan => plan.id)).toEqual(['free', 'pro', 'dealer'])
     store.savePlan('pro', { name: 'پرو ویژه', price: 250000, description: 'جدید', features: ['تحلیل بازار'], enabled: true, popular: true, sort_order: 2 })
