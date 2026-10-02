@@ -9,7 +9,7 @@ describe('subscription-gated suspicious listing insights', () => {
     expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'free' })).toBe(false)
     expect(canViewRiskInsights({ role: 'user' }, { status: 'expired', plan: 'pro' })).toBe(false)
     expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'pro' })).toBe(true)
-    expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'dealer' })).toBe(true)
+    expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'dealer' })).toBe(false)
     expect(canViewRiskInsights({ role: 'admin' }, null)).toBe(true)
   })
 

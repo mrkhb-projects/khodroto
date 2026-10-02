@@ -1,6 +1,6 @@
 export function canViewRiskInsights(user, subscription) {
   return Boolean(user?.role === 'admin' || (
-    subscription?.status === 'active' && ['pro', 'dealer'].includes(subscription.plan)
+    subscription?.status === 'active' && subscription.plan === 'pro'
   ))
 }
 
