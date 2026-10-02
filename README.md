@@ -166,3 +166,5 @@ PATCH                   /api/admin/subscriptions/:id
 ### تست روی زیرساخت ایران
 
 گزینه‌های فعلی هاست رایگان/اعتباری ایران و مراحل استقرار Node.js در [IRAN_TEST_HOSTING.md](IRAN_TEST_HOSTING.md) مقایسه شده‌اند. پروژه دارای اسکریپت `npm start` است و برای استقرار ZIP روی سرویس‌هایی مانند لیارا آماده است.
+
+برای اتصال دامنه `bidup.ir`، ساخت Node App در cPanel و انتشار خودکار هر Push از GitHub روی Server.ir، راهنمای [SERVER_IR_GITHUB_DEPLOY.md](SERVER_IR_GITHUB_DEPLOY.md) و قالب Workflow آماده `deploy/github-actions-server-ir.yml.example` را ببینید.

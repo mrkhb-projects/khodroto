@@ -1,0 +1,85 @@
+name: Deploy to Server.ir
+
+on:
+  push:
+    branches:
+      - main
+      - arena/01a0f43a-khodroto
+  workflow_dispatch:
+
+concurrency:
+  group: server-ir-production
+  cancel-in-progress: true
+
+jobs:
+  verify-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_ENABLED: ${{ secrets.SERVER_IR_HOST }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build production application
+        run: npm run build
+
+      - name: Configure SSH
+        if: env.DEPLOY_ENABLED != ''
+        env:
+          SSH_KEY: ${{ secrets.SERVER_IR_SSH_KEY }}
+          SSH_HOST: ${{ secrets.SERVER_IR_HOST }}
+          SSH_PORT: ${{ secrets.SERVER_IR_PORT }}
+          KNOWN_HOSTS: ${{ secrets.SERVER_IR_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p "${SSH_PORT:-22}" "$SSH_HOST" >> ~/.ssh/known_hosts
+          fi
+
+      - name: Upload application without production data
+        if: env.DEPLOY_ENABLED != ''
+        env:
+          SSH_HOST: ${{ secrets.SERVER_IR_HOST }}
+          SSH_PORT: ${{ secrets.SERVER_IR_PORT }}
+          SSH_USER: ${{ secrets.SERVER_IR_USER }}
+          APP_PATH: ${{ secrets.SERVER_IR_APP_PATH }}
+        run: |
+          ssh -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "mkdir -p '$APP_PATH' '$APP_PATH/data' '$APP_PATH/tmp'"
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'node_modules/' \
+            --exclude 'data/' \
+            --exclude '.env' \
+            -e "ssh -p ${SSH_PORT:-22}" \
+            ./ "$SSH_USER@$SSH_HOST:$APP_PATH/"
+
+      - name: Install production packages and restart Node app
+        if: env.DEPLOY_ENABLED != ''
+        env:
+          SSH_HOST: ${{ secrets.SERVER_IR_HOST }}
+          SSH_PORT: ${{ secrets.SERVER_IR_PORT }}
+          SSH_USER: ${{ secrets.SERVER_IR_USER }}
+          APP_PATH: ${{ secrets.SERVER_IR_APP_PATH }}
+        run: |
+          ssh -p "${SSH_PORT:-22}" "$SSH_USER@$SSH_HOST" "cd '$APP_PATH' && npm ci --omit=dev && mkdir -p tmp && touch tmp/restart.txt"
+
+      - name: Explain skipped deployment
+        if: env.DEPLOY_ENABLED == ''
+        run: echo 'Build and tests passed. Deployment was skipped because SERVER_IR_HOST is not configured.'
