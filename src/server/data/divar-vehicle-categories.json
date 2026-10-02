@@ -1,0 +1,60 @@
+[
+  {
+    "slug": "vehicles",
+    "name": "وسایل نقلیه",
+    "parents": [],
+    "parent_slugs": []
+  },
+  {
+    "slug": "car-and-motor",
+    "name": "خودرو و موتورسیکلت",
+    "parents": [
+      "خدمات"
+    ],
+    "parent_slugs": [
+      "services"
+    ]
+  },
+  {
+    "slug": "cars",
+    "name": "خودرو",
+    "parents": [
+      "وسایل نقلیه"
+    ],
+    "parent_slugs": [
+      "vehicles"
+    ]
+  },
+  {
+    "slug": "motorcycles",
+    "name": "موتورسیکلت",
+    "parents": [
+      "وسایل نقلیه"
+    ],
+    "parent_slugs": [
+      "vehicles"
+    ]
+  },
+  {
+    "slug": "parts-accessories",
+    "name": "قطعات یدکی و لوازم جانبی",
+    "parents": [
+      "وسایل نقلیه"
+    ],
+    "parent_slugs": [
+      "vehicles"
+    ]
+  },
+  {
+    "slug": "light",
+    "name": "سواری و وانت",
+    "parents": [
+      "خودرو",
+      "وسایل نقلیه"
+    ],
+    "parent_slugs": [
+      "cars",
+      "vehicles"
+    ]
+  }
+]

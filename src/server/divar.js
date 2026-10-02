@@ -85,6 +85,7 @@ function normalizeWebItem(widget) {
     color: '—',
     city: [webInfo.city_persian, webInfo.district_persian].filter(Boolean).join('، ') || 'دیوار',
     price,
+    priceText: data.middle_description_text || (price ? String(price) : 'توافقی'),
     freshness: (data.bottom_description_text || '').split(' در ')[0] || 'تازه',
     link: (data.token || payload.token) ? `https://divar.ir/v/${data.token || payload.token}` : 'https://divar.ir/s/tehran/car',
     image: data.image_url || null,
@@ -232,7 +233,7 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
 export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
   const configuredCityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
   const cityIds = filters.cityIds?.length ? filters.cityIds : configuredCityIds
-  const category = ['light','motorcycles','heavy'].includes(filters.category) ? filters.category : env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
+  const category = ['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(filters.category) ? filters.category : env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
   const formData = { category: { str: { value: category } } }
   const addRange = (key,min,max) => { if(min||max) formData[key]={number_range:{...(min?{minimum:Number(min)}:{}),...(max?{maximum:Number(max)}:{})}} }
   addRange('price',filters.minPrice,filters.maxPrice)
@@ -272,7 +273,7 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
     for (const widget of payload.list_widgets || []) {
       if (widget.widget_type !== 'POST_ROW') continue
       const item = normalizeWebItem(widget)
-      if (item.id && item.price && !seen.has(item.id)) { seen.add(item.id); rows.push(item) }
+      if (item.id && (item.price || ['parts-accessories','vehicles-services'].includes(category)) && !seen.has(item.id)) { seen.add(item.id); rows.push(item) }
     }
     const pagination = payload.pagination || {}
     hasNextPage = Boolean(pagination.has_next_page && pagination.data)
@@ -283,6 +284,12 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
     if (requestDelay) await new Promise(resolve => setTimeout(resolve, requestDelay))
   }
 
+  if (['parts-accessories','vehicles-services'].includes(category)) {
+    const filteredRows=applyLocalFilters(rows,filters).filter(item=>item.image)
+    const enriched=await Promise.all(filteredRows.slice(0,12).map(item=>enrichWebItem(item,env,fetchImpl)))
+    const items=[...enriched,...filteredRows.slice(12)].map(item=>({...item,market:item.price||0,score:item.price?55:50,discount:0,sampleSize:filteredRows.length,label:item.price?'قیمت ثبت‌شده':'قیمت توافقی'}))
+    return{source:'divar-web',category,scope:`web:${category}:${[...cityIds].sort().join(',')}`,items,observedTokens:rows.map(item=>item.id),totalAnalyzed:rows.length,excludedNoPhoto:rows.length-filteredRows.length,suspiciousCount:0,pagesFetched,truncated:hasNextPage,fullSnapshot:!hasNextPage&&!filters.queryText,updatedAt:new Date().toISOString()}
+  }
   const analysis = analyzeListings(applyLocalFilters(rows, filters), { category, includeNoPhoto: false })
   const ranked = analysis.items
   if (filters.sort === 'cheap') ranked.sort((a,b)=>a.price-b.price)
@@ -293,6 +300,56 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   if (filters.sort === 'cheap') items.sort((a,b)=>a.price-b.price)
   if (filters.sort === 'expensive') items.sort((a,b)=>b.price-a.price)
   return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, pagesFetched, truncated: hasNextPage, fullSnapshot: !hasNextPage && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
+}
+
+export async function discoverDivarVehicleCatalog({ env = process.env, fetchImpl = fetch } = {}) {
+  const seeds = ['vehicles','cars','light','heavy','motorcycles','parts-accessories','vehicles-services']
+  const categories = new Map(), brands = new Set(), models = new Map()
+  const walk = (value, key = '') => {
+    if (!value || typeof value !== 'object') return
+    if (Array.isArray(value)) { for (const item of value) walk(item, key); return }
+    const normalizedKey = String(key).toLowerCase()
+    const label = String(value.title || value.name || value.display_value || '').trim()
+    const optionValue = String(value.value || value.slug || '').trim()
+    if (label && optionValue && /brand|برند/.test(normalizedKey)) brands.add(label)
+    if (label && optionValue && /model|مدل/.test(normalizedKey)) {
+      const brand = String(value.brand || value.parent || 'سایر').trim()
+      if (!models.has(brand)) models.set(brand, new Set())
+      models.get(brand).add(label)
+    }
+    for (const [childKey, child] of Object.entries(value)) walk(child, `${normalizedKey}.${childKey}`)
+  }
+  for (const slug of seeds) {
+    const body = { city_ids:['1'], search_data:{form_data:{data:{category:{str:{value:slug}}}}}, pagination_data:{'@type':'type.googleapis.com/post_list.PaginationData',page:1,page_size:1} }
+    try {
+      const payload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/search`, { method:'POST', provider:'web', headers:webHeaders(env), body:JSON.stringify(body) }, fetchImpl)
+      const crumb = payload?.seo_details?.bread_crumb || []
+      for (const entry of crumb) {
+        const category = entry?.search_data?.form_data?.data?.category?.str?.value
+        if (category) categories.set(category,{slug:category,name:entry.name||category})
+      }
+      walk(payload)
+      if (['light','heavy','motorcycles'].includes(slug)) {
+        const filterPayload = await jsonRequest(`${webApiBase(env)}/v8/postlist/w/filters`, { method:'POST', provider:'web', headers:webHeaders(env), body:JSON.stringify({city_ids:['1'],search_data:{form_data:{data:{category:{str:{value:slug}}}}}}) }, fetchImpl)
+        for (const widget of filterPayload?.page?.widget_list || []) {
+          const data = widget?.data || {}, key = String(data?.field?.key || '')
+          if (!/brand.?model/i.test(key)) continue
+          for (const option of data.options || []) {
+            const display = String(option.display || '').trim(), raw = String(option.value || '')
+            if (!display) continue
+            const parts = raw.split(/::|\||\//).map(value=>value.trim()).filter(Boolean)
+            const brand = parts.length > 1 ? parts[0] : display.split(/\s+/).slice(0,2).join(' ')
+            brands.add(brand)
+            if (!models.has(brand)) models.set(brand,new Set())
+            models.get(brand).add(display)
+          }
+        }
+      }
+    } catch (error) {
+      if (slug === seeds[0]) throw error
+    }
+  }
+  return { categories:[...categories.values()], brands:[...brands], models:[...models].map(([brand,items])=>({brand,models:[...items]})), syncedAt:new Date().toISOString(), source:'divar-web' }
 }
 
 export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null } = {}) {

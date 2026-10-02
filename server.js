@@ -2,7 +2,8 @@ import express from 'express'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fallbackCars } from './src/data.js'
-import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
+import { createDivarService, discoverDivarVehicleCatalog, DivarUpstreamError } from './src/server/divar.js'
+import { publicVehicleCatalog } from './src/server/catalog.js'
 import { createDatabase } from './src/server/database.js'
 import { canViewRiskInsights, listingForViewer } from './src/server/access.js'
 
@@ -14,6 +15,7 @@ const store = createDatabase()
 const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('='))).khodroto_session
 const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
 const adminPreview=process.env.ADMIN_PREVIEW==='true'&&process.env.NODE_ENV!=='production'
+const requireDealer=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});const subscription=store.subscription(user.id),active=subscription?.plan==='dealer'&&subscription.status==='active'&&Date.parse(subscription.expires_at)>Date.now();if(!active&&user.role!=='admin')return res.status(403).json({error:'DEALER_PLAN_REQUIRED'});req.user=user;next()}
 const adminOnly=(req,res,next)=>adminPreview?(req.user={id:0,name:'مدیر پیش‌نمایش',role:'admin'},next()):requireUser(req,res,()=>req.user.role==='admin'?next():res.status(403).json({error:'FORBIDDEN'}))
 const contactAttempts=new Map()
 const adminLoginAttempts=new Map()
@@ -32,6 +34,20 @@ async function persistCrawl(result, { verifyMissing = true } = {}) {
   }
 }
 
+let marketRefreshRunning=false
+async function refreshConfiguredMarket(){
+ if(marketRefreshRunning)return{running:true,total:0,pages:0,scopes:0}
+ marketRefreshRunning=true
+ try{
+  const cityIds=publicVehicleCatalog(store.settings()).cities.map(city=>city.id)
+  const categories=['light','heavy','motorcycles','parts-accessories','vehicles-services'],batchSize=Math.max(1,Number(process.env.DIVAR_CITY_BATCH_SIZE)||40)
+  const cityBatches=Array.from({length:Math.ceil(cityIds.length/batchSize)},(_,index)=>cityIds.slice(index*batchSize,(index+1)*batchSize))
+  let total=0,pages=0,scopes=0
+  for(const category of categories)for(const batch of cityBatches){const result=await divar.refresh({category,cityIds:batch});await persistCrawl(result);total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
+  return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length}
+ }finally{marketRefreshRunning=false}
+}
+
 app.disable('x-powered-by')
 app.set('trust proxy',1)
 app.use(express.json({ limit: '20kb' }))
@@ -45,7 +61,7 @@ function searchFilters(query) {
   const brand = String(query.brand || '').trim()
   const freeQuery = [query.model, query.query].map(value=>String(value||'').trim()).filter(Boolean).join(' ')
   return {
-    category: ['light','motorcycles','heavy'].includes(String(query.category)) ? String(query.category) : 'light',
+    category: ['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(String(query.category)) ? String(query.category) : 'light',
     suspiciousOnly: String(query.suspiciousOnly)==='true',
     city: /^[a-z0-9-]{1,40}$/.test(String(query.city || '')) ? String(query.city) : undefined,
     cityIds: /^\d+(,\d+)*$/.test(String(query.city || '')) ? String(query.city).split(',') : undefined,
@@ -90,9 +106,19 @@ app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plan=String(
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
 app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
 app.get('/api/content/slides',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json({items:store.slides(true)})})
+app.get('/api/catalog/vehicles',(_req,res)=>{res.set('Cache-Control','public, max-age=3600');res.json(publicVehicleCatalog(store.settings()))})
 app.get('/api/plans',(_req,res)=>res.json({items:store.plans(true)}))
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site_name','site_tagline','support_phone','support_email','maintenance_mode','card_golden','card_good','card_fair','card_expensive','card_suspicious','mobile_listing_mode','hero_ticker','hero_title','hero_description','section_slider','section_search','section_opportunities','section_campaign','section_method','section_score','section_faq','feature_comparison','feature_alerts','feature_pricing','score_golden_min','score_good_min','vehicle_categories','vehicle_brands','supported_cities','vehicle_colors','default_city','default_sort','enable_motorcycles','enable_heavy_vehicles','faq_content','faq_enabled','faq_home_count','header_links','footer_platform_links','footer_help_links','footer_description','copyright_text','public_font_scale','show_announcement','enable_motion','campaign_enabled','campaign_title','campaign_description','campaign_discount','campaign_cta','seo_title','seo_description','og_title','og_description','og_image'];res.json(Object.fromEntries(keys.map(key=>[key,s[key]])))})
+app.get('/api/dealer/summary',requireDealer,(req,res)=>{const inventory=store.dealerInventory(req.user.id),leads=store.dealerLeads(req.user.id),investment=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.buy_price,0),expected=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.target_price,0);res.json({inventory,leads,metrics:{inventoryCount:inventory.length,available:inventory.filter(item=>item.status==='available').length,activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,investment,expectedProfit:Math.max(0,expected-investment)},market:store.publicStats()})})
+app.post('/api/dealer/inventory',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerInventory(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
+app.patch('/api/dealer/inventory/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerInventory(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
+app.delete('/api/dealer/inventory/:id',requireDealer,(req,res)=>{store.deleteDealerInventory(req.user.id,Number(req.params.id));res.json({ok:true})})
+app.post('/api/dealer/leads',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerLead(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
+app.patch('/api/dealer/leads/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerLead(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
+app.delete('/api/dealer/leads/:id',requireDealer,(req,res)=>{store.deleteDealerLead(req.user.id,Number(req.params.id));res.json({ok:true})})
+app.get('/api/dealer/export.csv',requireDealer,(req,res)=>{const esc=value=>`"${String(value??'').replaceAll('"','""')}"`,rows=[['نوع','عنوان/نام','خودرو','سال','قیمت خرید/بودجه','قیمت هدف','وضعیت','تلفن'],...store.dealerInventory(req.user.id).map(item=>['موجودی',item.title,`${item.brand} ${item.model}`,item.year,item.buy_price,item.target_price,item.status,'']),...store.dealerLeads(req.user.id).map(item=>['مشتری',item.name,item.vehicle,'',item.budget,'',item.status,item.phone])];res.set({'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="khodroto-dealer.csv"'});res.send('\ufeff'+rows.map(row=>row.map(esc).join(',')).join('\n'))})
+
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
 app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))
 app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);store.audit(req.user.id,'update_role','user',req.params.id,{role});res.json({ok:true})})
@@ -118,7 +144,8 @@ app.post('/api/admin/integrations/:kind',adminOnly,(req,res)=>{const kind=integr
 app.patch('/api/admin/integrations/:kind/:id',adminOnly,(req,res)=>{const kind=integrationKind(req);if(!kind)return res.status(400).json({error:'INVALID_KIND'});try{const items=store.saveIntegration(kind,integrationInput(req.body,kind),Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update',kind,req.params.id,{name:req.body?.name});res.json({items})}catch(error){res.status(error.code==='ENCRYPTION_KEY_REQUIRED'?503:400).json({error:error.code||'INVALID_INTEGRATION'})}})
 app.delete('/api/admin/integrations/:kind/:id',adminOnly,(req,res)=>{const kind=integrationKind(req);if(!kind)return res.status(400).json({error:'INVALID_KIND'});store.deleteIntegration(kind,Number(req.params.id));store.audit(req.user.id,'delete',kind,req.params.id);res.json({ok:true})})
 
-app.post('/api/admin/crawler/refresh',adminOnly,async(req,res)=>{try{const result=await divar.refresh({});await persistCrawl(result);store.audit(req.user.id,'refresh','crawler','manual',{total:result.totalAnalyzed,pages:result.pagesFetched});res.json({ok:true,total:result.totalAnalyzed,pages:result.pagesFetched,reconciled:Boolean(result.fullSnapshot),source:result.source})}catch(error){const code=error.code||'CRAWLER_ERROR';res.status(error.status>=400&&error.status<600?error.status:502).json({error:code,message:code==='UPSTREAM_ERROR'?'سرور میزبان به شبکه دیوار دسترسی ندارد؛ اتصال ایران یا رله خصوصی را تنظیم کنید.':error.message,integration:divar.status()})}})
+app.post('/api/admin/catalog/sync',adminOnly,async(req,res)=>{try{const catalog=await discoverDivarVehicleCatalog();const values={catalog_synced_at:catalog.syncedAt};if(catalog.categories.length)values.vehicle_categories=catalog.categories.map(item=>`${item.slug} | ${item.name}`).join('\n');if(catalog.brands.length)values.vehicle_brands=catalog.brands.join('\n');if(catalog.models.length)values.vehicle_models=catalog.models.map(item=>`${item.brand} | ${item.models.join(',')}`).join('\n');store.updateSettings(values);store.audit(req.user.id,'sync','divar_catalog','vehicle',{categories:catalog.categories.length,brands:catalog.brands.length});res.json({...catalog,cities:publicVehicleCatalog(store.settings()).cities.length})}catch(error){res.status(error.status||502).json({error:error.code||'CATALOG_SYNC_FAILED',message:error.message})}})
+app.post('/api/admin/crawler/refresh',adminOnly,async(req,res)=>{try{const result=await refreshConfiguredMarket();store.audit(req.user.id,'refresh','crawler','manual',result);res.json({ok:true,...result,source:divar.status().provider})}catch(error){const code=error.code||'CRAWLER_ERROR';res.status(error.status>=400&&error.status<600?error.status:502).json({error:code,message:code==='UPSTREAM_ERROR'?'سرور میزبان به شبکه دیوار دسترسی ندارد؛ اتصال ایران یا رله خصوصی را تنظیم کنید.':error.message,integration:divar.status()})}})
 
 app.get('/api/integration/status', (_req, res) => {
   const status = divar.status()
@@ -158,7 +185,7 @@ app.get('/api/listings', async (req, res) => {
 
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
-const warmMarketCache = () => divar.refresh({}).then(async result => {await persistCrawl(result);console.log(`[divar] cached ${result.totalAnalyzed || result.items.length} listings from ${result.pagesFetched || 1} pages`)} ).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+const warmMarketCache = () => refreshConfiguredMarket().then(result=>console.log(`[divar] refreshed ${result.total} listings across ${result.cities||0} cities and ${result.scopes||0} categories`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
 warmMarketCache()
 setInterval(warmMarketCache, cacheTtl).unref()
 

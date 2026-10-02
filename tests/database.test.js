@@ -103,6 +103,22 @@ describe('listing lifecycle', () => {
     expect(store.plans().find(plan => plan.id === 'pro')).toMatchObject({ name: 'پرو ویژه', price: 250000, features: ['تحلیل بازار'], enabled: true })
   })
 
+  it('provides persistent dealer inventory and lead management', () => {
+    const store = database()
+    const user = store.db.prepare("INSERT INTO users(phone,name,created_at) VALUES('09121111111','نمایشگاه تست',datetime('now')) RETURNING id").get()
+    store.saveDealerInventory(user.id, { title: 'تارا اتوماتیک', brand: 'ایران خودرو', model: 'تارا', year: 1403, buy_price: 1_000_000_000, target_price: 1_120_000_000, status: 'available' })
+    const vehicle = store.dealerInventory(user.id)[0]
+    expect(vehicle).toMatchObject({ title: 'تارا اتوماتیک', target_price: 1_120_000_000, status: 'available' })
+    store.saveDealerInventory(user.id, { ...vehicle, status: 'sold' }, vehicle.id)
+    expect(store.dealerInventory(user.id)[0].status).toBe('sold')
+
+    store.saveDealerLead(user.id, { name: 'خریدار تست', phone: '09120000001', vehicle: 'تارا', budget: 1_200_000_000, status: 'new' })
+    const lead = store.dealerLeads(user.id)[0]
+    expect(lead).toMatchObject({ name: 'خریدار تست', vehicle: 'تارا', status: 'new' })
+    store.deleteDealerLead(user.id, lead.id)
+    expect(store.dealerLeads(user.id)).toEqual([])
+  })
+
   it('stores unlimited active payment and SMS integrations without exposing secrets', () => {
     const store = database()
     store.saveIntegration('payment', { name: 'درگاه اصلی', provider: 'zarinpal', secret: 'merchant-secret', enabled: true, priority: 1, config: { merchantId: 'm-1' } })
