@@ -77,7 +77,7 @@ jobs:
           protocol: ftps
           security: loose
           local-dir: deploy-out/
-          server-dir: repositories/khodroto/
+          server-dir: repositories/
           # Uploads only the files inside deploy-out/ and never touches anything else
           # on the host: data/, .env and node_modules/ are neither uploaded nor deleted
           # (they never enter the action's sync state, and deletions only apply to
