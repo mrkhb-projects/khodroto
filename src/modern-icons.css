@@ -1,0 +1,89 @@
+/* Unified modern icon language */
+svg {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.search-icon,
+.step-icon,
+.modal-icon,
+.integration-icon,
+.admin-kpis article > span,
+.dash-stats article > svg {
+  transition: transform .25s ease, color .25s ease, background .25s ease, box-shadow .25s ease;
+}
+
+.search-icon,
+.modal-icon {
+  background: linear-gradient(145deg, #fff4f0, #f8ded7);
+  border: 1px solid rgba(232,95,71,.14);
+  box-shadow: inset 0 1px rgba(255,255,255,.8), 0 8px 20px rgba(232,95,71,.1);
+}
+
+.step-icon {
+  background: linear-gradient(145deg,#fff,#f2f7f5);
+  border: 1px solid #dce8e4;
+  box-shadow: 0 12px 28px rgba(16,35,63,.08), inset 0 1px #fff;
+}
+
+.step-icon svg,
+.search-icon svg,
+.modal-icon svg,
+.admin-kpis svg,
+.integration-icon svg {
+  stroke-width: 2;
+}
+
+.market-categories button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-weight: 800;
+  transition: transform .2s, background .2s, color .2s, box-shadow .2s;
+}
+.market-categories button svg { width: 20px; height: 20px; stroke-width: 2; }
+.market-categories button:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(16,35,63,.08); }
+.market-categories button.active { box-shadow: 0 10px 24px rgba(16,35,63,.18); }
+
+.risk-pro-lock { display: flex; align-items: center; gap: 9px; margin: 13px 0 2px; padding: 12px; border: 1px solid #ead9ad; border-radius: 10px; color: #8a641d; background: linear-gradient(135deg,#fff9e9,#fff); }
+.risk-pro-lock > svg { width: 21px; min-width: 21px; }
+.risk-pro-lock span { display: flex; flex-direction: column; }
+.risk-pro-lock b { font-size: 11px; }
+.risk-pro-lock small { margin-top: 2px; font-size: 9px; color: #9c8351; }
+
+.car-img button,
+.result-image > button,
+.modal-close,
+.slider-controls > button {
+  box-shadow: 0 7px 20px rgba(16,35,63,.12);
+}
+
+.car-img button svg,
+.result-image button svg,
+.divar-link svg,
+.result-content > a svg,
+.text-link svg,
+.primary svg,
+.secondary svg {
+  stroke-width: 2.1;
+}
+
+.shield > svg,
+.risk-box > svg,
+.payment-trust > svg,
+.credentials-notice > svg {
+  filter: drop-shadow(0 4px 8px rgba(37,139,115,.15));
+}
+
+.admin-sidebar nav button svg,
+.dash-sidebar > button svg,
+.dash-sidebar > a svg {
+  stroke-width: 1.9;
+}
+
+@media (max-width: 600px) {
+  .market-categories { display: grid; grid-template-columns: repeat(3,1fr); }
+  .market-categories button { min-width: 0; padding: 10px 5px; gap: 5px; font-size: 11px; }
+  .market-categories button svg { width: 18px; }
+}

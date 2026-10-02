@@ -1,0 +1,221 @@
+.market-slider-wrap {
+  background: var(--cream);
+  padding: 18px 0 35px;
+}
+
+.market-slider {
+  height: 390px;
+  position: relative;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 22px 55px rgba(12, 29, 49, 0.18);
+}
+
+.market-slider > article {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(1.035);
+  transition: opacity 0.75s ease, transform 1.1s ease, visibility 0.75s;
+}
+
+.market-slider > article.active {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+}
+
+/* The artwork keeps the cars on the left; copy occupies its dedicated dark area on the right. */
+.market-slider article > div {
+  width: min(610px, 53%);
+  height: 100%;
+  margin-right: 0;
+  margin-left: auto;
+  padding: 50px 56px 52px 34px;
+  color: #fff;
+  direction: rtl;
+  text-align: right;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.market-slider article span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #8cd7c1;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.market-slider article span svg {
+  width: 19px;
+  height: 19px;
+}
+
+.market-slider article h2 {
+  max-width: 560px;
+  font-size: clamp(40px, 3.35vw, 52px);
+  font-weight: 900;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+  margin: 12px 0 10px;
+}
+
+.market-slider article p {
+  max-width: 530px;
+  margin: 0 0 26px;
+  color: #e2e8ee;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.9;
+}
+
+.market-slider article .primary {
+  min-height: 52px;
+  padding: 14px 25px;
+  gap: 10px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.2);
+}
+
+.market-slider article .primary svg {
+  width: 20px;
+  height: 20px;
+}
+
+.market-slider .theme-gold span { color: #f3c86e; }
+.market-slider .theme-gold .primary { background: #d69b31; }
+.market-slider .theme-teal .primary { background: #258b73; }
+.market-slider .theme-coral .primary { background: var(--coral); }
+
+.slider-controls {
+  position: absolute;
+  z-index: 5;
+  bottom: 19px;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  direction: ltr;
+}
+
+.slider-controls > button {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(9, 22, 40, 0.52);
+  color: #fff;
+  font-size: 24px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  backdrop-filter: blur(5px);
+}
+
+.slider-controls > div {
+  display: flex;
+  gap: 5px;
+}
+
+.slider-controls > div button {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.45);
+  padding: 0;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.slider-controls > div button.active {
+  width: 26px;
+  background: #fff;
+}
+
+@media (max-width: 900px) {
+  .market-slider article > div {
+    width: 58%;
+    padding-right: 34px;
+    padding-left: 20px;
+  }
+
+  .market-slider article h2 {
+    font-size: 36px;
+  }
+
+  .market-slider article p {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 700px) {
+  .market-slider-wrap {
+    padding: 10px 0 25px;
+  }
+
+  .market-slider {
+    height: 420px;
+    border-radius: 14px;
+  }
+
+  .market-slider > article {
+    background-position: 38% center;
+  }
+
+  .market-slider article > div {
+    width: 72%;
+    margin-right: 0;
+    margin-left: auto;
+    padding: 34px 20px 72px 14px;
+    justify-content: center;
+    background: linear-gradient(270deg, rgba(7, 18, 34, 0.94) 0%, rgba(7, 18, 34, 0.82) 62%, rgba(7, 18, 34, 0) 100%);
+  }
+
+  .market-slider article span {
+    font-size: 12px;
+  }
+
+  .market-slider article h2 {
+    font-size: clamp(28px, 8.4vw, 35px);
+    line-height: 1.4;
+    margin-top: 9px;
+  }
+
+  .market-slider article p {
+    font-size: 13px;
+    line-height: 1.85;
+    margin-bottom: 20px;
+  }
+
+  .market-slider article .primary {
+    min-height: 48px;
+    padding: 12px 19px;
+    font-size: 14px;
+  }
+
+  .slider-controls {
+    left: 16px;
+    bottom: 15px;
+  }
+}
+
+@media (max-width: 420px) {
+  .market-slider article > div {
+    width: 78%;
+    padding-right: 17px;
+  }
+
+  .market-slider article p {
+    font-size: 12px;
+  }
+}
