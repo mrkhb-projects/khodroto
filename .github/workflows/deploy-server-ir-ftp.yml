@@ -57,12 +57,40 @@ jobs:
       - name: Assemble deployment package
         run: |
           mkdir -p deploy-out/tmp
-          cp -a server.js package.json package-lock.json src dist deploy-out/
+          cp -a server.js app.js package.json package-lock.json src dist deploy-out/
           # Phusion Passenger watches tmp/restart.txt's mtime in the application root.
           # A fresh timestamp guarantees the file always changes so it is re-uploaded
           # on every deploy, which restarts the Node.js application automatically.
           date -u +"%Y-%m-%dT%H:%M:%SZ" > deploy-out/tmp/restart.txt
           find deploy-out -maxdepth 1 -mindepth 1 | sort
+
+      - name: Detect FTP application directory
+        id: ftp-dir
+        env:
+          FTP_HOST: ${{ secrets.SERVER_IR_FTP_HOST }}
+          FTP_USERNAME: ${{ secrets.SERVER_IR_FTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.SERVER_IR_FTP_PASSWORD }}
+          FTP_PORT: ${{ secrets.SERVER_IR_FTP_PORT }}
+        run: |
+          probe() {
+            curl --silent --connect-timeout 15 --ftp-ssl --insecure --list-only \
+              -u "$FTP_USERNAME:$FTP_PASSWORD" "ftp://$FTP_HOST:${FTP_PORT:-21}/${1}" 2>/dev/null || true
+          }
+          # FTP accounts on shared cPanel hosts may log in at the account home or
+          # directly inside the application root. Detect which one it is by looking
+          # for marker files so the upload always lands in repositories/khodroto.
+          root_list="$(probe)"
+          if echo "$root_list" | grep -qxE "server\.js|package\.json"; then
+            dir="./"
+          elif echo "$root_list" | grep -qx "repositories"; then
+            if probe "repositories/" | grep -qx "khodroto"; then dir="repositories/khodroto/"; else dir="./"; fi
+          else
+            dir="./"
+          fi
+          echo "FTP login directory listing (first lines):"
+          echo "$root_list" | head -15 | sed 's/^/  /'
+          echo "Selected FTP server-dir: $dir"
+          echo "server_dir=$dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload application over FTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
@@ -77,7 +105,12 @@ jobs:
           protocol: ftps
           security: loose
           local-dir: deploy-out/
-          server-dir: repositories/
+          # Auto-detected above: never needs manual adjustment. Uploads only the files
+          # inside deploy-out/ and never touches anything else on the host: data/, .env
+          # and node_modules/ are neither uploaded nor deleted (they never enter the
+          # action's sync state, and deletions only apply to files that the action
+          # deployed itself and that were removed later).
+          server-dir: ${{ steps.ftp-dir.outputs.server_dir }}
           # Uploads only the files inside deploy-out/ and never touches anything else
           # on the host: data/, .env and node_modules/ are neither uploaded nor deleted
           # (they never enter the action's sync state, and deletions only apply to
