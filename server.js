@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import { fallbackCars } from './src/data.js'
 import { createDivarService, DivarUpstreamError } from './src/server/divar.js'
 import { createDatabase } from './src/server/database.js'
+import { canViewRiskInsights, listingForViewer } from './src/server/access.js'
 
 const app = express()
 const PORT = process.env.PORT || 5173
@@ -122,23 +123,28 @@ app.get('/api/integration/status', (_req, res) => {
 })
 
 app.get('/api/listings', async (req, res) => {
+  const viewer=store.userFromToken(cookieToken(req)),subscription=viewer?store.subscription(viewer.id):null
+  const canViewRisk=canViewRiskInsights(viewer,subscription)
+  const publicListing=item=>listingForViewer(item,canViewRisk)
   try {
-    const result = await divar.listings(searchFilters(req.query))
+    const filters=searchFilters(req.query);if(!canViewRisk)filters.suspiciousOnly=false
+    const result = await divar.listings(filters)
     if (!result.cached) await persistCrawl(result)
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
-    const filtered = String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
+    const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
     const offset = Math.max(0, Number(req.query.offset) || 0)
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...publicResult, items: filtered.slice(offset, offset + limit), totalMatches: filtered.length, offset, limit, integration: divar.status() })
+    res.json({ ...publicResult, items: filtered.slice(offset, offset + limit).map(publicListing), totalMatches: filtered.length, offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
     res.status(200).json({
       source: process.env.NODE_ENV==='production'?'unavailable':'demo',
-      items: process.env.NODE_ENV==='production'?[]:applyBudget(fallbackCars, String(req.query.budget || '')).slice(0, Math.min(200, Math.max(1, Number(req.query.limit) || 6))),
+      items: process.env.NODE_ENV==='production'?[]:applyBudget(fallbackCars, String(req.query.budget || '')).slice(0, Math.min(200, Math.max(1, Number(req.query.limit) || 6))).map(publicListing),
       totalMatches: process.env.NODE_ENV==='production'?0:applyBudget(fallbackCars, String(req.query.budget || '')).length,
+      riskInsightsUnlocked:canViewRisk,
       notice: known && error.code === 'NOT_CONFIGURED'
         ? 'اتصال داده واقعی دیوار روی سرور تنظیم نشده است.'
         : process.env.NODE_ENV==='production'?'اتصال سرور به دیوار برقرار نیست؛ برای جلوگیری از نمایش اطلاعات غیرواقعی، داده نمونه مخفی شده است.':'ارتباط با دیوار موقتاً برقرار نشد؛ داده نمونه صرفاً برای پیش‌نمایش توسعه نمایش داده می‌شود.',

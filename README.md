@@ -162,3 +162,7 @@ PATCH                   /api/admin/subscriptions/:id
 ### اتصال مستقیم دیوار با سایت جهانی
 
 برای اجرای frontend/backend روی میزبان جهانی و عبور فقط ترافیک جمع‌آوری از رله خصوصی ایران، راهنمای [GLOBAL_DIVAR_DEPLOYMENT.md](GLOBAL_DIVAR_DEPLOYMENT.md) و فایل‌های آماده `docker-compose.relay.yml`، `deploy/relay.Dockerfile` و `deploy/relay-nginx.conf` را ببینید. این معماری به «کنار» وابسته نیست.
+
+### تست روی زیرساخت ایران
+
+گزینه‌های فعلی هاست رایگان/اعتباری ایران و مراحل استقرار Node.js در [IRAN_TEST_HOSTING.md](IRAN_TEST_HOSTING.md) مقایسه شده‌اند. پروژه دارای اسکریپت `npm start` است و برای استقرار ZIP روی سرویس‌هایی مانند لیارا آماده است.

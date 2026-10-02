@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "dev": "vite build && node --env-file-if-exists=.env server.js",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
