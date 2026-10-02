@@ -21,6 +21,7 @@ import './responsive-refinements.css'
 import './admin-readable.css'
 import './modern-icons.css'
 import './compare.css'
+import './public-readable.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)

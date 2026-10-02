@@ -1,0 +1,118 @@
+/* Unified readable type scale for every user-facing screen. */
+:root{
+  --user-text-xs:13px;
+  --user-text-sm:14px;
+  --user-text-md:16px;
+  --user-text-lg:18px;
+}
+body{font-size:var(--user-text-md);line-height:1.75;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+/* Header and global actions */
+.header nav a,.nav-actions a,.nav-actions button,.announcement{font-size:var(--user-text-sm)}
+.primary,.secondary{font-size:var(--user-text-sm);font-weight:700}
+.primary.small{font-size:var(--user-text-sm)}
+
+/* Homepage */
+.eyebrow,.kicker{font-size:var(--user-text-sm)}
+.hero-copy>p{font-size:var(--user-text-lg);line-height:2}
+.text-link{font-size:var(--user-text-sm)}
+.trust,.trust span{font-size:var(--user-text-sm)}
+.floating-card b{font-size:15px}.floating-card small{font-size:var(--user-text-xs)}
+.image-stat>small,.image-stat span{font-size:12px}
+.search-heading b{font-size:20px}.search-heading span{font-size:var(--user-text-sm)}
+.search-heading>a,.vehicle-type-tabs button,.advanced-toggle,.clear-search{font-size:var(--user-text-sm)}
+.fields label>span,.advanced-fields label>span{font-size:var(--user-text-sm)}
+.fields select,.fields input,.search-text-field input,.advanced-fields select{font-size:var(--user-text-sm)}
+.section-head p,.center-head p,.faq>p{font-size:var(--user-text-md);line-height:1.9}
+.live,.data-notice{font-size:var(--user-text-xs)}
+
+/* Homepage listing cards */
+.time,.place{font-size:var(--user-text-xs)}
+.card-top h3{font-size:19px;line-height:1.6}
+.score span{font-size:11px}.score b{font-size:20px}
+.specs,.specs span{font-size:var(--user-text-sm)}
+.prices small{font-size:var(--user-text-xs)}
+.prices strong{font-size:19px}.prices strong em,.prices del{font-size:var(--user-text-xs)}
+.saving{font-size:var(--user-text-xs);line-height:1.7}.saving b{font-size:var(--user-text-xs)}
+.risk-box{font-size:var(--user-text-xs)}.risk-box b{font-size:var(--user-text-sm)}
+.compare small,.divar-link,.compare-card-button{font-size:var(--user-text-xs)}
+.method article p,.score-section p,.faq article p{font-size:15px;line-height:2}
+.method article h3,.faq article button b{font-size:17px}
+
+/* Search results and filters */
+.page-breadcrumb{font-size:var(--user-text-sm)}
+.cars-hero p,.pricing-page .center-head>p{font-size:var(--user-text-md);line-height:1.9}
+.market-mini span{font-size:var(--user-text-xs)}
+.market-categories button,.divar-search input,.divar-search button,.search-city select{font-size:var(--user-text-sm)}
+.filter-head h3{font-size:var(--user-text-md)}.filter-head>button{font-size:var(--user-text-xs)}
+.filter-group>b,.filter-group>input,.range-inputs input,.select-box select,.choice-row button{font-size:var(--user-text-sm)}
+.range-inputs span{font-size:var(--user-text-xs)}
+.suspicious-toggle b{font-size:var(--user-text-sm)}.suspicious-toggle small{font-size:var(--user-text-xs)}
+.results-head b{font-size:var(--user-text-md)}.results-head span{font-size:var(--user-text-xs)}
+.result-card{min-height:225px;grid-template-columns:170px 1fr}
+.result-image>span,.result-title small,.result-specs,.result-risk,.result-price small,.result-price>span{font-size:var(--user-text-xs)}
+.result-title h3{font-size:17px;line-height:1.55}
+.result-price b{font-size:15px}.result-content>a{font-size:var(--user-text-xs)}
+
+/* Pricing and checkout */
+.pricing-page .center-head{padding-top:48px}
+.pricing-page h1{font-size:40px;line-height:1.5}
+.plans article{padding:31px}
+.popular-badge{font-size:var(--user-text-xs);padding:7px 16px}
+.plans h3{font-size:23px}
+.plans article>p{font-size:15px;line-height:1.9;min-height:30px}
+.plan-price b{font-size:34px}.plan-price span{font-size:var(--user-text-sm)}
+.plans li{font-size:15px;line-height:1.8;padding:8px 0}.plans li svg{width:18px;height:18px}
+.plans article>button{min-height:49px;font-size:15px}
+.payment-trust b{font-size:15px}.payment-trust small{font-size:var(--user-text-xs);line-height:1.8}
+.checkout h3{font-size:22px}.checkout>label,.gateway-options>label{font-size:var(--user-text-sm)}
+.order-row,.payment-methods button,.gateway-options button,.payment-hint,.checkout>input{font-size:var(--user-text-sm)}
+.checkout>small{font-size:var(--user-text-xs)}
+
+/* User dashboard */
+.dashboard-page{font-size:var(--user-text-md)}
+.dash-user b{font-size:15px}.dash-user small{font-size:var(--user-text-xs)}
+.dash-sidebar>button,.dash-sidebar>a{font-size:15px;min-height:46px}
+.dash-welcome span{font-size:var(--user-text-sm)}.dash-welcome h1{font-size:31px}
+.dash-stats small{font-size:var(--user-text-xs)}.dash-stats b{font-size:21px}
+.dash-section-head h2{font-size:23px}.dash-section-head p{font-size:var(--user-text-sm)}
+.alert-row b,.saved-search b,.current-plan b{font-size:15px}
+.alert-row small,.saved-search small,.current-plan span{font-size:var(--user-text-xs)}
+.account-form label{font-size:var(--user-text-sm)}
+.account-form input,.account-form select,.account-form textarea{font-size:var(--user-text-sm)}
+
+/* Information, legal, FAQ and contact pages */
+.info-hero span{font-size:var(--user-text-sm)}.info-hero p{font-size:17px}
+.info-layout aside b{font-size:15px}.info-layout aside a{font-size:var(--user-text-sm);line-height:1.8}
+.info-content h2,.contact-grid h2{font-size:26px}
+.info-content p{font-size:var(--user-text-md);line-height:2.1}
+.info-content li{font-size:15px;line-height:2}
+.standalone-faq button b{font-size:17px;line-height:1.8}
+.standalone-faq p{font-size:15px;line-height:2.1}
+.contact-details>p{font-size:var(--user-text-md)}
+.contact-details small{font-size:var(--user-text-xs)}.contact-details b{font-size:15px}
+.contact-note p{font-size:var(--user-text-sm)}
+.contact-form label{font-size:var(--user-text-sm);font-weight:700}
+.contact-form input,.contact-form select,.contact-form textarea{font-size:var(--user-text-sm)}
+.footer-top p,.footer-top a,.notify p,.copyright,.footer-legal a{font-size:var(--user-text-sm)!important;line-height:1.9}
+.footer-top b,.notify b{font-size:15px}
+
+/* Comparison */
+.compare-hero p,.compare-verdict p{font-size:var(--user-text-sm)}
+.compare-products h3{font-size:16px}.compare-products small,.compare-products a{font-size:var(--user-text-xs)}
+.compare-row>b,.compare-row>span,.compare-disclaimer{font-size:var(--user-text-sm)}
+
+@media(max-width:700px){
+  :root{--user-text-xs:12px;--user-text-sm:13px;--user-text-md:15px;--user-text-lg:16px}
+  .hero-copy>p{font-size:16px}
+  .search-heading b{font-size:18px}
+  .card-top h3{font-size:18px}
+  .result-card{grid-template-columns:130px 1fr;min-height:220px}
+  .result-title h3{font-size:16px}
+  .pricing-page h1{font-size:31px}
+  .plans article{padding:25px}
+  .plans h3{font-size:22px}.plans article>p,.plans li{font-size:15px}
+  .info-hero p,.info-content p{font-size:15px}
+  .standalone-faq button b{font-size:16px;max-width:90%}
+  .dash-welcome h1{font-size:23px}
+}
