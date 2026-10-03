@@ -583,8 +583,9 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
       res.set('Cache-Control', 'private, max-age=60')
       return res.json({ source:'db', category:filters.category, items:visible.items.slice(offset,offset+limit).map(publicListing), totalMatches:visible.items.length, hiddenCount:visible.hiddenCount, dealerCount:visible.dealerCount, showingHidden:visible.showingHidden, visibilityBand:visibilityBand(), offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(visible.items,entry), integration:divar.status() })
     }
-    const result = await divar.listings(filters)
-    if (!result.cached) await persistCrawl(result)
+    // foreground:true → bounded crawl so the visitor waits seconds, not minutes.
+    const result = await divar.listings(filters, { foreground: true })
+    if (!result.cached) await persistCrawl(result, { verifyMissing: !result.partial })
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
@@ -611,7 +612,6 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
 // served immediately while the next crawl runs in the background.
 const warmMarketCache = () => refreshConfiguredMarket().then(result=>console.log(`[divar] refreshed ${result.total} listings across ${result.cities||0} cities and ${result.scopes||0} categories`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
 loadReferenceFromStore()
-try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
 
 // Reference sources publish a few times a day, so polling every couple of minutes
 // would only burn their bandwidth and risk a block. 15 minutes keeps us current
@@ -620,10 +620,17 @@ const referenceIntervalMs=Math.max(5,Number(process.env.REFERENCE_REFRESH_MINUTE
 const warmReference=()=>refreshReferencePrices()
  .then(result=>console.log(`[reference] refreshed ${result.rows} prices across ${result.models} models`))
  .catch(error=>console.warn(`[reference:warmup] ${error.message}`))
-if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
 
-warmMarketCache()
-setInterval(warmMarketCache, cacheTtl).unref()
+// Everything below is startup WORK, not startup REQUIREMENTS. Running it before
+// app.listen() meant the process spent its first minutes rebuilding baselines and
+// sweeping Divar while the port was not even open yet — the visitor who arrived in
+// that window simply waited. The server now listens first and warms afterwards.
+function startBackgroundWork(){
+ try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
+ if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
+ warmMarketCache()
+ setInterval(warmMarketCache, cacheTtl).unref()
+}
 
 // Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
 // one unambiguous port; all client-side routes fall back to index.html.
@@ -632,4 +639,9 @@ app.get('/admin',(_req,res)=>res.redirect(302,'/khodroto-admin'))
 const dist = path.resolve('dist')
 app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
 app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
-app.listen(PORT, '0.0.0.0', () => console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`))
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`)
+  // One tick after the port is open, so the first request is never queued behind
+  // the baseline rebuild. STARTUP_WARM=false disables it for tests and CI.
+  if(process.env.STARTUP_WARM!=='false')setTimeout(startBackgroundWork,100).unref?.()
+})

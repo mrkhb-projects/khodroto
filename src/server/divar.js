@@ -398,7 +398,29 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
   return { source: 'kenar', category: filters.category || env.DIVAR_CATEGORY || 'light', items: enriched, observedTokens: normalized.map(item => item.id), totalAnalyzed: normalized.length, fullSnapshot: false, updatedAt: new Date().toISOString() }
 }
 
-export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch, detailCache = null, reference = null, knownTokens = null } = {}) {
+/**
+ * A "budget" bounds a crawl so it can run inside a user's HTTP request.
+ *
+ * WHY THIS EXISTS
+ * The first visitor after a cold start used to trigger an UNBOUNDED sweep: up to
+ * 500 pages with a 450 ms delay between them (≈ 225 s of sleeping alone) plus up to
+ * 200 detail fetches — all awaited inside their request. That is the two-minute
+ * first search. The incremental early-stop could not help, because it needs tokens
+ * we have already seen and on a cold database there are none.
+ *
+ * A foreground crawl therefore gets a few pages, no enrichment and a hard deadline;
+ * the exhaustive crawl continues in the background and replaces the cache entry.
+ */
+export function foregroundBudget(env = process.env) {
+  return {
+    maxPages: Math.max(1, Number(env.DIVAR_FOREGROUND_MAX_PAGES) || 2),
+    timeoutMs: Math.max(1000, Number(env.DIVAR_FOREGROUND_TIMEOUT_MS) || 8000),
+    delayMs: Math.max(0, Number(env.DIVAR_FOREGROUND_DELAY_MS) || 0),
+    enrichLimit: Math.max(0, Number(env.DIVAR_FOREGROUND_ENRICH ?? 0)),
+  }
+}
+
+export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch, detailCache = null, reference = null, knownTokens = null, budget = null } = {}) {
   const configuredCityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
   const cityIds = filters.cityIds?.length ? filters.cityIds : configuredCityIds
   const category = ['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(filters.category) ? filters.category : env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
@@ -421,8 +443,17 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   }
   const requestedMaxPages = Number(env.DIVAR_MAX_PAGES ?? 0)
   const hardMaxPages = Math.max(1, Number(env.DIVAR_HARD_MAX_PAGES) || 500)
-  const maxPages = requestedMaxPages > 0 ? Math.min(requestedMaxPages, hardMaxPages) : hardMaxPages
-  const requestDelay = Math.max(0, Number(env.DIVAR_REQUEST_DELAY_MS) || 450)
+  const configuredMaxPages = requestedMaxPages > 0 ? Math.min(requestedMaxPages, hardMaxPages) : hardMaxPages
+  const maxPages = budget?.maxPages ? Math.min(budget.maxPages, configuredMaxPages) : configuredMaxPages
+  // `|| 450` would ignore an explicit 0, so an operator could never turn the
+  // politeness delay off on a fast private relay. Parse it properly.
+  const configuredDelay = Number(env.DIVAR_REQUEST_DELAY_MS)
+  const requestDelay = budget
+    ? Math.max(0, budget.delayMs ?? 0)
+    : Math.max(0, Number.isFinite(configuredDelay) ? configuredDelay : 450)
+  // Wall-clock guard: a slow upstream must not hold a visitor's request open.
+  const deadline = budget?.timeoutMs ? Date.now() + budget.timeoutMs : 0
+  let deadlineHit = false
   // --- incremental crawl ----------------------------------------------------
   // Divar returns newest-first. Once we hit a run of pages whose listings we have
   // all seen recently, everything further back is older still, so there is nothing
@@ -446,6 +477,7 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   let hasNextPage = true
 
   while (hasNextPage && page <= maxPages) {
+    if (deadline && Date.now() > deadline) { deadlineHit = true; stoppedEarly = true; break }
     const paginationData = cursor
       ? { '@type': 'type.googleapis.com/post_list.PaginationData', page, page_size: 60, ...cursor }
       : { '@type': 'type.googleapis.com/post_list.PaginationData', page: 1, page_size: 60 }
@@ -492,13 +524,19 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   // Enrich FIRST so colour, mileage and the exact build year reach the market
   // baseline — not just the twelve cards that happened to rank highest.
   const filtered = applyLocalFilters(rows, filters)
-  const { items: detailed, stats: enrichStats } = await enrichListings(filtered, { env, fetchImpl, cache: detailCache })
+  // A foreground crawl reads only what the detail cache already holds (limit 0), so
+  // the visitor never waits on hundreds of detail fetches. The background crawl
+  // that follows does the real enrichment work.
+  const { items: detailed, stats: enrichStats } = await enrichListings(filtered, {
+    env, fetchImpl, cache: detailCache,
+    ...(budget ? { limit: budget.enrichLimit ?? 0 } : {}),
+  })
   const finalAnalysis = analyzeListings(detailed, { category, includeNoPhoto: false, reference })
   const items = finalAnalysis.items
   const analysis = finalAnalysis
   if (filters.sort === 'cheap') items.sort((a,b)=>a.price-b.price)
   if (filters.sort === 'expensive') items.sort((a,b)=>b.price-a.price)
-  return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, rejectedCount: finalAnalysis.rejectedCount, reviewCount: finalAnalysis.reviewCount, enrichment: enrichStats, incremental: { enabled: Boolean(incrementalEnabled), stoppedEarly, newTokens, knownTokens: knownTokens?.size || 0 }, pagesFetched, truncated: hasNextPage, fullSnapshot: !hasNextPage && !stoppedEarly && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
+  return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, rejectedCount: finalAnalysis.rejectedCount, reviewCount: finalAnalysis.reviewCount, enrichment: enrichStats, incremental: { enabled: Boolean(incrementalEnabled), stoppedEarly, newTokens, knownTokens: knownTokens?.size || 0 }, pagesFetched, truncated: hasNextPage, partial: Boolean(budget), deadlineHit, fullSnapshot: !budget && !hasNextPage && !stoppedEarly && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
 }
 
 export async function discoverDivarVehicleCatalog({ env = process.env, fetchImpl = fetch } = {}) {
@@ -583,15 +621,18 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
   const requestedProvider = String(env.DIVAR_PROVIDER || '').toLowerCase()
   const provider = requestedProvider === 'disabled' ? 'none' : requestedProvider === 'kenar' ? (env.KENAR_API_KEY ? 'kenar' : 'none') : env.KENAR_API_KEY && requestedProvider !== 'web' ? 'kenar' : 'web'
 
-  async function refresh(filters = {}) {
+  async function refresh(filters = {}, { budget = null } = {}) {
     await hydrateCache()
     const key = JSON.stringify(filters)
-    if (inflight.has(key)) return inflight.get(key)
-    const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl, detailCache, reference: getReference(), knownTokens: getKnownTokens(filters.category) }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
+    // Full and bounded crawls for the same filters must not share an inflight slot,
+    // otherwise the quick one would be handed the slow one's promise and wait on it.
+    const slot = budget ? `${key}|foreground` : key
+    if (inflight.has(slot)) return inflight.get(slot)
+    const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl, detailCache, reference: getReference(), knownTokens: getKnownTokens(filters.category), budget }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
       .then(value => { lastSuccessAt=new Date().toISOString();lastError=null;cache.set(key, { time: Date.now(), value }); persistCache(); return value })
       .catch(error=>{lastError={code:error.code||'UPSTREAM_ERROR',message:error.message,at:new Date().toISOString()};throw error})
-      .finally(() => inflight.delete(key))
-    inflight.set(key, request)
+      .finally(() => inflight.delete(slot))
+    inflight.set(slot, request)
     return request
   }
 
@@ -610,16 +651,38 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     }
   }
 
-  async function listings(filters = {}) {
+  /**
+   * @param foreground true when a visitor is waiting on this call. A foreground
+   *        miss returns a small, fast slice and schedules the exhaustive crawl.
+   */
+  async function listings(filters = {}, { foreground = false } = {}) {
     await hydrateCache()
     const key = JSON.stringify(filters)
     const cached = cache.get(key)
     if (cached && Date.now() - cached.time < cacheTtlMs) return { ...cached.value, cached: true }
     if (cached) {
+      // Stale-while-revalidate: answer instantly, refresh behind the scenes.
       refresh(filters).catch(() => {})
       return { ...cached.value, cached: true, stale: true }
     }
-    return refresh(filters)
+    if (!foreground) return refresh(filters)
+    try {
+      const quick = await refresh(filters, { budget: foregroundBudget(env) })
+      backgroundRefresh(filters)
+      return { ...quick, partial: true }
+    } catch (error) {
+      // A bounded attempt that fails should not strand the visitor on an error page
+      // if the slow path can still answer; but neither should they wait minutes.
+      backgroundRefresh(filters)
+      throw error
+    }
+  }
+
+  // Fire-and-forget full crawl. Errors are already recorded by refresh().
+  function backgroundRefresh(filters) {
+    const key = JSON.stringify(filters)
+    if (inflight.has(key)) return
+    refresh(filters).catch(() => {})
   }
 
   return {
