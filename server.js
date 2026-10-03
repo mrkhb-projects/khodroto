@@ -17,7 +17,7 @@ import { visibilityBand } from './src/server/opportunity.js'
 import { dedupeListings } from './src/server/dedupe.js'
 import { estimateValue } from './src/server/estimate.js'
 import { dispatchAlerts } from './src/server/alerts.js'
-import { buildModelPages, renderModelPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
+import { buildModelPages, renderModelPage, renderIndexPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
 import fs from 'node:fs'
 import { collectExternalListings, providerStatuses } from './src/server/providers/index.js'
 
@@ -323,14 +323,27 @@ function seoPages() {
 }
 const siteOrigin = () => (process.env.SITE_ORIGIN || 'https://bidup.ir').replace(/\/$/, '')
 
+const readShell = () => { try { return fs.readFileSync(path.join(dist, 'index.html'), 'utf8') } catch { return null } }
+
+// The hub. Without it every /price/:slug page is an orphan that only the sitemap
+// knows about — no internal links in, and no way for a visitor who landed on one
+// model to reach another.
+app.get('/price', rateLimit({ max: 120 }), (_req, res, next) => {
+ const { pages } = seoPages()
+ const shell = readShell()
+ if (!shell || !pages.length) return next()
+ res.set('Cache-Control', 'public, max-age=600')
+ res.type('html').send(renderIndexPage(shell, pages, { origin: siteOrigin() }))
+})
+
 app.get('/price/:slug', rateLimit({ max: 120 }), (req, res, next) => {
- const { bySlug } = seoPages()
+ const { bySlug, pages } = seoPages()
  const page = bySlug.get(slugify(decodeURIComponent(req.params.slug)))
  if (!page) return next()
- let shell
- try { shell = fs.readFileSync(path.join(dist, 'index.html'), 'utf8') } catch { return next() }
+ const shell = readShell()
+ if (!shell) return next()
  res.set('Cache-Control', 'public, max-age=600')
- res.type('html').send(renderModelPage(shell, page, { origin: siteOrigin() }))
+ res.type('html').send(renderModelPage(shell, page, { origin: siteOrigin(), allPages: pages }))
 })
 
 // Machine-readable index of every model page, handy for debugging and for the UI.
@@ -342,7 +355,7 @@ app.get('/api/seo/models', rateLimit({ max: 30 }), (_req, res) => {
 app.get('/sitemap.xml', (_req, res) => {
  const { pages } = seoPages()
  res.set('Cache-Control', 'public, max-age=3600').type('application/xml')
- res.send(renderSitemap(pages, { origin: siteOrigin(), staticPaths: ['/', '/cars', '/compare', '/methodology', '/pricing', '/faq', '/about'] }))
+ res.send(renderSitemap(pages, { origin: siteOrigin(), staticPaths: ['/', '/cars', '/price', '/estimate', '/compare', '/methodology', '/pricing', '/faq', '/about'] }))
 })
 
 app.get('/robots.txt', (_req, res) => {

@@ -237,6 +237,33 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · price hub', () => {
+  it('serves the hub that links the model pages together', async () => {
+    const response = await get('/price')
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('قیمت روز خودرو')
+    expect(html).toContain('"@type":"ItemList"')
+  })
+
+  it('links from the hub to a real model page that renders', async () => {
+    const html = await (await get('/price')).text()
+    const match = html.match(/href="\/price\/([^"]+)"/)
+    expect(match).toBeTruthy()
+    const page = await get(`/price/${match[1]}`)
+    expect(page.status).toBe(200)
+    const body = await page.text()
+    expect(body).toContain('"@type":"BreadcrumbList"')
+    expect(body).toContain('"@type":"FAQPage"')
+  })
+
+  it('advertises the hub and the estimator in the sitemap', async () => {
+    const xml = await (await get('/sitemap.xml')).text()
+    expect(xml).toContain('/price</loc>')
+    expect(xml).toContain('/estimate</loc>')
+  })
+})
+
 describe('e2e · seller tools', () => {
   it('serves the value-estimate page', async () => {
     const response = await get('/estimate')
