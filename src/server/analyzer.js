@@ -28,7 +28,7 @@ export function cohortKey(item, categoryHint = 'light') { return identifyVehicle
  * `windowDays` bounds the baseline to recent activity (default 30 days) so stale
  * crawls cannot define today's prices.
  */
-export function analyzeListings(items, { category = 'light', includeNoPhoto = false, windowDays = DEFAULT_WINDOW_DAYS, now = Date.now(), priceIndex = null, reference = null } = {}) {
+export function analyzeListings(items, { category = 'light', includeNoPhoto = false, windowDays = DEFAULT_WINDOW_DAYS, now = Date.now(), priceIndex = null, reference = null, policy = null } = {}) {
   const all = (items || []).map(item => ({ ...item, identity: item.identity || identifyVehicle(item.title, category), year: normalizeYear(item.year) || 0 }))
   const valid = all.filter(item => Number(item.price) > 0 && (includeNoPhoto || Boolean(item.image)))
   const excludedNoPhoto = items.length - valid.length
@@ -42,7 +42,9 @@ export function analyzeListings(items, { category = 'light', includeNoPhoto = fa
     // available, otherwise screen on the spot (e.g. a caller passed a prebuilt index).
     const screened = built.verdicts?.get(item.id ?? item.token)
       || screenListing(item, { reference, cohort: valuation })
-    const verdict = evaluateListing(item, valuation, { now, screen: screened })
+    // `policy` lets the admin panel retune the visibility band without a redeploy;
+    // when absent evaluateListing falls back to the environment defaults.
+    const verdict = evaluateListing(item, valuation, { now, screen: screened, ...(policy ? { env: policy } : {}) })
     return {
       ...item,
       model: item.identity.label,

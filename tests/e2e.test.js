@@ -237,6 +237,53 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · admin operations surface', () => {
+  it('guards the new endpoints behind the admin session', async () => {
+    expect((await get('/api/admin/health')).status).toBe(401)
+    expect((await get('/api/admin/sellers')).status).toBe(401)
+  })
+})
+
+describe('e2e · scoring policy is configurable, not hard-coded', () => {
+  it('publishes the band the operator configured', async () => {
+    const data = await (await get('/api/listings?limit=3')).json()
+    expect(data.visibilityBand).toMatchObject({ min: 15, max: 30 })
+  })
+})
+
+describe('e2e · the free tier cap is enforced by the server', () => {
+  // It used to live only in the UI, which politely asked for six results. A
+  // visitor who typed ?limit=200 got the entire board and the subscription was
+  // decorative.
+  it('caps an anonymous request however large a limit it asks for', async () => {
+    const response = await get('/api/listings?limit=200')
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data.items.length).toBeLessThanOrEqual(6)
+    // The true match count stays visible — that is what justifies upgrading.
+    expect(data.totalMatches).toBeGreaterThan(data.items.length)
+    expect(data.riskInsightsUnlocked).toBe(false)
+  })
+
+  it('does not let paging reassemble the full list', async () => {
+    const first = await (await get('/api/listings?limit=6&offset=0')).json()
+    const deep = await (await get('/api/listings?limit=6&offset=60')).json()
+    expect(deep.items.length).toBeGreaterThan(0)
+    // A free viewer is pinned to the head of the ranking: paging is a paid
+    // feature, and a moving window would otherwise collect more than the cap.
+    expect(deep.items.map(item => item.id)).toEqual(first.items.map(item => item.id))
+  })
+
+  it('still withholds the forensic fields from a free viewer', async () => {
+    const data = await (await get('/api/listings?limit=3')).json()
+    for (const item of data.items) {
+      expect(item).not.toHaveProperty('gateCodes')
+      expect(item).not.toHaveProperty('dealerSignals')
+      expect(item).not.toHaveProperty('riskFlags')
+    }
+  })
+})
+
 describe('e2e · price hub', () => {
   it('serves the hub that links the model pages together', async () => {
     const response = await get('/price')

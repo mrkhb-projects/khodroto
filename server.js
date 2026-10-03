@@ -161,6 +161,20 @@ function searchFilters(query) {
  * `showHidden=true` (or `includeSuspicious=true`) is the visitor ticking the box.
  * The counts are always reported so the UI can say «۱۴ آگهی مشکوک پنهان شد».
  */
+/**
+ * How many listings one request may return.
+ *
+ * Paid viewers get the full page size; everyone else gets `free_results` (default
+ * 6, tunable in the admin panel). Clamped to a sane floor so a mistyped setting
+ * cannot make the site look empty, and to a ceiling so nobody can pull the whole
+ * database in one call.
+ */
+function planResultCap(unlocked) {
+  if (unlocked) return 200
+  const configured = Number(store.settings().free_results)
+  return Math.min(60, Math.max(3, Number.isFinite(configured) && configured > 0 ? configured : 6))
+}
+
 function applyVisibility(items, query = {}) {
   const asked = ['showHidden', 'includeSuspicious', 'includeDealers'].some(key => String(query[key]) === 'true')
   const hiddenCount = items.filter(item => item.hidden).length
@@ -467,7 +481,46 @@ app.patch('/api/admin/listings/:token',adminOnly,(req,res)=>{const status=['acti
 app.get('/api/admin/plans',adminOnly,(_req,res)=>res.json({items:store.plans()}))
 app.patch('/api/admin/plans/:id',adminOnly,(req,res)=>{const items=store.savePlan(String(req.params.id),req.body||{});if(!items)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update','plan',req.params.id);res.json({items})})
 app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
-app.patch('/api/admin/settings',adminOnly,(req,res)=>{const settings=store.updateSettings(req.body||{});store.audit(req.user.id,'update','settings','general');res.json({settings})})
+app.patch('/api/admin/settings',adminOnly,(req,res)=>{
+ const settings=store.updateSettings(req.body||{})
+ // Scoring policy lives in settings now, so a saved change must invalidate the
+ // memoised analysis — otherwise retuning the band appears to do nothing for two
+ // minutes and the operator concludes the panel is broken.
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'update','settings','general')
+ res.json({settings})
+})
+
+// One place that answers "is the pipeline healthy, and what can I do about it?"
+// Every number here was already computed somewhere; none of it was reachable.
+app.get('/api/admin/health',adminOnly,(_req,res)=>{
+ const categories=['light','heavy','motorcycles']
+ const market=categories.map(category=>{
+  try{
+   const entry=marketAnalysis(category)
+   const tiers={}
+   for(const item of entry.items)tiers[item.tier||'unknown']=(tiers[item.tier||'unknown']||0)+1
+   return{category,listings:entry.items.length,hidden:entry.items.filter(item=>item.hidden).length,dealers:entry.items.filter(item=>item.dealer).length,models:entry.summary?.totalModels||0,tiers,duplicates:entry.dedupe?.removed||0}
+  }catch(error){return{category,error:error.message}}
+ })
+ let details=null
+ try{details=store.detailCache.stats()}catch{}
+ res.json({
+  integration:divar.status(),
+  market,
+  enrichment:details,
+  sources:{listings:providerStatuses(),reference:referenceStatuses()},
+  reference:{models:referenceIndex?.cohorts||0,...store.referenceMeta()},
+  policy:visibilityBand(visibilityPolicy()),
+  database:store.stats(),
+ })
+})
+
+// Sellers whose prices repeatedly fail the screen, for the admin table.
+app.get('/api/admin/sellers',adminOnly,(req,res)=>{
+ const limit=Math.min(200,Math.max(1,Number(req.query.limit)||50))
+ res.json({items:store.worstSellers(limit),minAds:sellerPublicMin()})
+})
 app.get('/api/admin/slides',adminOnly,(_req,res)=>res.json({items:store.slides()}))
 app.post('/api/admin/slides',adminOnly,(req,res)=>{try{const items=store.saveSlide(req.body||{});store.audit(req.user.id,'create','slide','',{title:req.body?.title});res.status(201).json({items})}catch{res.status(400).json({error:'INVALID_SLIDE'})}})
 app.patch('/api/admin/slides/:id',adminOnly,(req,res)=>{try{const items=store.saveSlide(req.body||{},Number(req.params.id));store.audit(req.user.id,'update','slide',req.params.id,{title:req.body?.title});res.json({items})}catch{res.status(400).json({error:'INVALID_SLIDE'})}})
@@ -535,7 +588,7 @@ function marketAnalysis(category){
  // Step 2 — build one price index and reuse it for both scoring and the summary,
  // so a listing is always judged against exactly the averages we publish.
  const priceIndex=buildPriceIndex(payloads,{categoryHint:category,windowDays:MARKET_WINDOW_DAYS,reference:referenceIndex})
- const analysis=analyzeListings(payloads,{category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,priceIndex,reference:referenceIndex})
+ const analysis=analyzeListings(payloads,{category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,priceIndex,reference:referenceIndex,policy:visibilityPolicy()})
  const items=analysis.items
  if(priceIndex.stats?.rejected||priceIndex.stats?.review)console.log(`[screen] ${category}: ${priceIndex.stats.rejected} rejected, ${priceIndex.stats.review} needs-review of ${priceIndex.stats.screened} listings`)
  const summary=summarizeMarket(payloads,{category,windowDays:MARKET_WINDOW_DAYS})
@@ -552,15 +605,33 @@ function marketAnalysis(category){
 
 // Minimum ads before a seller's record is shown publicly. Below this a single bad
 // ad would brand someone a fraudster, which is both unfair and legally risky.
-const SELLER_PUBLIC_MIN=Number(process.env.SELLER_REPUTATION_MIN_ADS)||5
+const sellerPublicMin=()=>{const fromSettings=Number(store.settings().seller_reputation_min_ads);if(Number.isFinite(fromSettings)&&fromSettings>0)return fromSettings;return Number(process.env.SELLER_REPUTATION_MIN_ADS)||5}
+/**
+ * The visibility band as the operator configured it in the admin panel, falling
+ * back to the environment and then to the defaults. Tuning the single most
+ * important policy in the product should not require SSH access to a .env file.
+ */
+function visibilityPolicy(){
+ const settings=store.settings()
+ const pick=(settingKey,envKey)=>{
+  const value=Number(settings[settingKey])
+  return Number.isFinite(value)&&value>0?String(value):process.env[envKey]
+ }
+ return {
+  OPPORTUNITY_MIN_DISCOUNT:pick('opportunity_min_discount','OPPORTUNITY_MIN_DISCOUNT'),
+  OPPORTUNITY_MAX_DISCOUNT:pick('opportunity_max_discount','OPPORTUNITY_MAX_DISCOUNT'),
+  HIDE_DEALER_ADS:settings.hide_dealer_ads==='false'?'false':process.env.HIDE_DEALER_ADS==='false'?'false':'true',
+ }
+}
+
 function attachSellerReputation(items){
- const cache=new Map()
+ const cache=new Map(),minAds=sellerPublicMin()
  for(const item of items){
   const key=item.sellerKey
   if(!key)continue
   if(!cache.has(key))cache.set(key,store.sellerReputation(key))
   const row=cache.get(key)
-  if(!row||row.listings<SELLER_PUBLIC_MIN)continue
+  if(!row||row.listings<minAds)continue
   const rejectRate=row.listings?row.rejected/row.listings:0
   item.seller={
    name:item.sellerName||row.label||'فروشنده',
@@ -649,7 +720,10 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
   try {
     const filters=searchFilters(req.query);if(!canViewRisk)filters.suspiciousOnly=false
     const offset = Math.max(0, Number(req.query.offset) || 0)
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
+    // The free-tier cap has to live HERE. It was only ever applied in the UI, which
+    // asked for six results — so `?limit=200&offset=0` handed any visitor the whole
+    // board and the subscription was decorative. The setting is now authoritative.
+    const limit = Math.min(planResultCap(canViewRisk), Math.max(1, Number(req.query.limit) || 6))
     // Serve instantly from the SQLite market database whenever possible; the background
     // warm-up loop keeps it fresh. Falling back to a live Divar crawl is slow (full
     // category sweeps fetch hundreds of pages) and made search feel broken.
@@ -661,9 +735,13 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
     // Hidden listings (dealer bait, >30% under market, failed fraud screen) are kept
     // out of the default feed for everyone and only returned on explicit opt-in.
     const visible=applyVisibility(storedFiltered,req.query)
+    // Paging is itself a paid feature: clamping the offset instead of zeroing it
+    // would still let a free viewer walk a window across the list and collect more
+    // than the cap. They always get the head of the ranking.
+    const windowStart=canViewRisk?offset:0
     if(visible.items.length){
       res.set('Cache-Control', 'private, max-age=60')
-      return res.json({ source:'db', category:filters.category, items:visible.items.slice(offset,offset+limit).map(publicListing), totalMatches:visible.items.length, hiddenCount:visible.hiddenCount, dealerCount:visible.dealerCount, showingHidden:visible.showingHidden, visibilityBand:visibilityBand(), offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(visible.items,entry), integration:divar.status() })
+      return res.json({ source:'db', category:filters.category, items:visible.items.slice(windowStart,windowStart+limit).map(publicListing), totalMatches:visible.items.length, hiddenCount:visible.hiddenCount, dealerCount:visible.dealerCount, showingHidden:visible.showingHidden, visibilityBand:visibilityBand(visibilityPolicy()), offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(visible.items,entry), integration:divar.status() })
     }
     // foreground:true → bounded crawl so the visitor waits seconds, not minutes.
     const result = await divar.listings(filters, { foreground: true })
@@ -673,7 +751,7 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
     const live=applyVisibility(filtered,req.query)
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...publicResult, items: live.items.slice(offset, offset + limit).map(publicListing), totalMatches: live.items.length, hiddenCount:live.hiddenCount, dealerCount:live.dealerCount, showingHidden:live.showingHidden, visibilityBand:visibilityBand(), offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
+    res.json({ ...publicResult, items: live.items.slice(canViewRisk?offset:0, (canViewRisk?offset:0) + limit).map(publicListing), totalMatches: live.items.length, hiddenCount:live.hiddenCount, dealerCount:live.dealerCount, showingHidden:live.showingHidden, visibilityBand:visibilityBand(visibilityPolicy()), offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
