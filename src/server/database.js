@@ -6,6 +6,11 @@ import crypto from 'node:crypto'
 const now=()=>new Date().toISOString()
 const tehranDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tehran',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const json=value=>JSON.stringify(value??null)
+const digitMap={'۰':'0','۱':'1','۲':'2','۳':'3','۴':'4','۵':'5','۶':'6','۷':'7','۸':'8','۹':'9','٠':'0','١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9'}
+const toEnglishDigits=value=>String(value??'').replace(/[۰-۹٠-٩]/g,char=>digitMap[char]||char)
+const normalizePhone=value=>{const raw=toEnglishDigits(value).replace(/\D/g,'');if(raw.startsWith('0098'))return `0${raw.slice(4)}`;if(raw.startsWith('98'))return `0${raw.slice(2)}`;return raw}
+const validPhone=value=>/^09\d{9}$/.test(value)
+const subscriptionDayCount=value=>Math.min(365000,Math.max(1,Number(value)||30))
 export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db'){
  fs.mkdirSync(path.dirname(file),{recursive:true});const db=new DatabaseSync(file);db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;')
  db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY,phone TEXT UNIQUE NOT NULL,name TEXT DEFAULT 'کاربر خودروتو',city TEXT DEFAULT '1',role TEXT DEFAULT 'user',created_at TEXT NOT NULL);
@@ -38,7 +43,9 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  CREATE TABLE IF NOT EXISTS reference_runs(id INTEGER PRIMARY KEY,source TEXT NOT NULL,ok INTEGER DEFAULT 0,rows INTEGER DEFAULT 0,raw INTEGER DEFAULT 0,note TEXT,ms INTEGER,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS market_baseline(category TEXT NOT NULL,cohort_key TEXT NOT NULL,year INTEGER NOT NULL DEFAULT 0,color TEXT NOT NULL DEFAULT '',segment TEXT,vehicle_type TEXT,brand TEXT,model TEXT,label TEXT,samples INTEGER NOT NULL,avg INTEGER NOT NULL,median INTEGER NOT NULL,p25 INTEGER,p75 INTEGER,min INTEGER,max INTEGER,mad INTEGER,dispersion REAL,window_days INTEGER,generated_at TEXT NOT NULL,PRIMARY KEY(category,cohort_key,year,color));
  CREATE INDEX IF NOT EXISTS idx_baseline_lookup ON market_baseline(category,cohort_key,year,color);
- CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,name TEXT NOT NULL,price INTEGER DEFAULT 0,description TEXT,features TEXT DEFAULT '[]',enabled INTEGER DEFAULT 1,popular INTEGER DEFAULT 0,sort_order INTEGER DEFAULT 100,updated_at TEXT NOT NULL);`)
+ CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,name TEXT NOT NULL,price INTEGER DEFAULT 0,description TEXT,features TEXT DEFAULT '[]',enabled INTEGER DEFAULT 1,popular INTEGER DEFAULT 0,sort_order INTEGER DEFAULT 100,updated_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS discount_codes(id INTEGER PRIMARY KEY,code TEXT UNIQUE NOT NULL,title TEXT,percent INTEGER DEFAULT 0,amount INTEGER DEFAULT 0,max_uses INTEGER DEFAULT 0,used_count INTEGER DEFAULT 0,starts_at TEXT,expires_at TEXT,enabled INTEGER DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS payment_orders(id INTEGER PRIMARY KEY,user_id INTEGER,subscription_id INTEGER,plan TEXT NOT NULL,method TEXT DEFAULT 'sandbox',gateway_id INTEGER,gateway_name TEXT,coupon_code TEXT,subtotal INTEGER DEFAULT 0,discount INTEGER DEFAULT 0,amount INTEGER DEFAULT 0,status TEXT DEFAULT 'paid',note TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id),FOREIGN KEY(subscription_id) REFERENCES subscriptions(id));`)
  const listingColumns=new Set(db.prepare('PRAGMA table_info(listings)').all().map(column=>column.name));
  const listingMigrations={category:"TEXT DEFAULT 'light'",crawl_scope:"TEXT DEFAULT 'web:light:1'",status:"TEXT DEFAULT 'active'",missing_count:'INTEGER DEFAULT 0',last_verified_at:'TEXT',inactive_at:'TEXT',removed_at:'TEXT'};
  for(const [column,type] of Object.entries(listingMigrations))if(!listingColumns.has(column))db.exec(`ALTER TABLE listings ADD COLUMN ${column} ${type}`)
@@ -95,6 +102,18 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  function deleteSlide(id){return db.prepare('DELETE FROM site_slides WHERE id=?').run(id)}
  function audit(adminId,action,entity,entityId='',details={}){db.prepare('INSERT INTO audit_logs(admin_id,action,entity,entity_id,details,created_at) VALUES(?,?,?,?,?,?)').run(adminId||null,String(action).slice(0,80),String(entity).slice(0,80),String(entityId).slice(0,100),json(details),now())}
  function audits(){return db.prepare('SELECT a.*,u.name admin_name,u.phone admin_phone FROM audit_logs a LEFT JOIN users u ON u.id=a.admin_id ORDER BY a.id DESC LIMIT 250').all()}
+ function userByPhone(phone){const normalized=normalizePhone(phone);return validPhone(normalized)?db.prepare('SELECT * FROM users WHERE phone=?').get(normalized)||null:null}
+ function userById(id){return db.prepare('SELECT * FROM users WHERE id=?').get(Number(id))||null}
+ function createAdminUser(data={}){
+  const phone=normalizePhone(data.phone)
+  if(!validPhone(phone)||userByPhone(phone))return null
+  const role=['user','admin'].includes(data.role)?data.role:'user'
+  const name=String(data.name||'کاربر خودروتو').trim().slice(0,80)||'کاربر خودروتو'
+  const city=String(data.city||'1').trim().slice(0,40)||'1'
+  db.prepare('INSERT INTO users(phone,name,city,role,created_at) VALUES(?,?,?,?,?)').run(phone,name,city,role,now())
+  return userByPhone(phone)
+ }
+ function ensureAdminUser(data={}){return userById(data.userId)||userByPhone(data.phone)||createAdminUser({...data,role:['user','admin'].includes(data.role)?data.role:'user'})}
  function requestOtp(phone){const code=String(Math.floor(10000+Math.random()*90000));db.prepare('INSERT INTO otp_codes(phone,code_hash,expires_at,attempts) VALUES(?,?,?,0) ON CONFLICT(phone) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0').run(phone,hash(code),Date.now()+120000);return code}
  // SECURITY: admin rights are granted ONLY to the configured ADMIN_PHONE, or when
  // DEV_AUTO_ADMIN=true is set deliberately. This used to read
@@ -104,27 +123,144 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  // full access to users, settings, exports and the crawler.
  function verifyOtp(phone,code){const row=db.prepare('SELECT * FROM otp_codes WHERE phone=?').get(phone);if(!row||row.expires_at<Date.now()||row.attempts>=5)return null;if(row.code_hash!==hash(code)){db.prepare('UPDATE otp_codes SET attempts=attempts+1 WHERE phone=?').run(phone);return null}db.prepare('DELETE FROM otp_codes WHERE phone=?').run(phone);db.prepare('INSERT OR IGNORE INTO users(phone,created_at) VALUES(?,?)').run(phone,now());if(process.env.ADMIN_PHONE===phone||process.env.DEV_AUTO_ADMIN==='true')db.prepare("UPDATE users SET role='admin' WHERE phone=?").run(phone);const user=db.prepare('SELECT * FROM users WHERE phone=?').get(phone),token=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(hash(token),user.id,Date.now()+30*86400000,now());return{user,token}}
  function userFromToken(token){if(!token)return null;return db.prepare('SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hash(token),Date.now())||null}
- function createAdminSession(phone){const normalized=String(phone||process.env.ADMIN_PHONE||'').trim();if(!/^09\d{9}$/.test(normalized))return null;db.prepare('INSERT OR IGNORE INTO users(phone,created_at) VALUES(?,?)').run(normalized,now());db.prepare("UPDATE users SET role='admin' WHERE phone=?").run(normalized);const user=db.prepare('SELECT * FROM users WHERE phone=?').get(normalized),token=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(hash(token),user.id,Date.now()+12*60*60*1000,now());return{user,token}}
+ function createAdminSession(phone){const normalized=normalizePhone(phone||process.env.ADMIN_PHONE||'');if(!validPhone(normalized))return null;db.prepare('INSERT OR IGNORE INTO users(phone,created_at) VALUES(?,?)').run(normalized,now());db.prepare("UPDATE users SET role='admin' WHERE phone=?").run(normalized);const user=db.prepare('SELECT * FROM users WHERE phone=?').get(normalized),token=crypto.randomBytes(32).toString('hex');db.prepare('INSERT INTO sessions(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)').run(hash(token),user.id,Date.now()+12*60*60*1000,now());return{user,token}}
  function plans(activeOnly=false){return db.prepare(`SELECT * FROM subscription_plans ${activeOnly?'WHERE enabled=1':''} ORDER BY sort_order,id`).all().map(row=>({...row,enabled:Boolean(row.enabled),popular:Boolean(row.popular),features:parseConfig(row.features)}))}function savePlan(id,data){const current=db.prepare('SELECT * FROM subscription_plans WHERE id=?').get(id);if(!current)return null;db.prepare('UPDATE subscription_plans SET name=?,price=?,description=?,features=?,enabled=?,popular=?,sort_order=?,updated_at=? WHERE id=?').run(String(data.name||current.name).slice(0,80),Math.max(0,Number(data.price??current.price)||0),String(data.description??current.description).slice(0,200),json(Array.isArray(data.features)?data.features:String(data.features||'').split('\n').filter(Boolean)),data.enabled===false?0:1,data.popular?1:0,Number(data.sort_order??current.sort_order)||100,now(),id);return plans()}
+ const couponCode=value=>toEnglishDigits(value).trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'').slice(0,40)
+ const isoOrNull=value=>{if(!value)return null;const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed.toISOString():null}
+ function discountCodes(){return db.prepare('SELECT * FROM discount_codes ORDER BY enabled DESC,id DESC LIMIT 200').all().map(row=>({...row,enabled:Boolean(row.enabled)}))}
+ function saveDiscountCode(data={},id=null){
+  const current=id?db.prepare('SELECT * FROM discount_codes WHERE id=?').get(id):null
+  if(id&&!current)return null
+  const code=couponCode(data.code??current?.code)
+  if(code.length<2)throw new Error('INVALID_CODE')
+  const title=String(data.title??current?.title??code).trim().slice(0,120)||code
+  const percent=Math.min(100,Math.max(0,Math.round(Number(data.percent??current?.percent)||0)))
+  const amount=Math.max(0,Math.round(Number(data.amount??current?.amount)||0))
+  const maxUses=Math.max(0,Math.round(Number(data.max_uses??data.maxUses??current?.max_uses)||0))
+  const usedCount=Math.max(0,Math.round(Number(data.used_count??current?.used_count)||0))
+  const startsAt=isoOrNull(data.starts_at??data.startsAt??current?.starts_at)
+  const expiresAt=isoOrNull(data.expires_at??data.expiresAt??current?.expires_at)
+  const enabled=data.enabled===false?0:data.enabled===true?1:Number(data.enabled??current?.enabled??1)?1:0
+  const stamp=now()
+  if(id)db.prepare('UPDATE discount_codes SET code=?,title=?,percent=?,amount=?,max_uses=?,used_count=?,starts_at=?,expires_at=?,enabled=?,updated_at=? WHERE id=?').run(code,title,percent,amount,maxUses,usedCount,startsAt,expiresAt,enabled,stamp,id)
+  else db.prepare('INSERT INTO discount_codes(code,title,percent,amount,max_uses,used_count,starts_at,expires_at,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(code,title,percent,amount,maxUses,0,startsAt,expiresAt,enabled,stamp,stamp)
+  return discountCodes()
+ }
+ function deleteDiscountCode(id){return db.prepare('DELETE FROM discount_codes WHERE id=?').run(id).changes>0}
+ function discountByCode(code){const normalized=couponCode(code);return normalized?db.prepare('SELECT * FROM discount_codes WHERE code=?').get(normalized)||null:null}
+ function applyDiscount(code,subtotal,{consume=false}={}){
+  const base=Math.max(0,Math.round(Number(subtotal)||0)),normalized=couponCode(code)
+  if(!normalized)return{ok:true,code:'',subtotal:base,discount:0,total:base,coupon:null}
+  const row=discountByCode(normalized)
+  if(!row)return{ok:false,error:'DISCOUNT_NOT_FOUND',code:normalized,subtotal:base,discount:0,total:base}
+  const nowMs=Date.now()
+  if(!row.enabled)return{ok:false,error:'DISCOUNT_DISABLED',code:normalized,subtotal:base,discount:0,total:base}
+  if(row.starts_at&&Date.parse(row.starts_at)>nowMs)return{ok:false,error:'DISCOUNT_NOT_STARTED',code:normalized,subtotal:base,discount:0,total:base}
+  if(row.expires_at&&Date.parse(row.expires_at)<nowMs)return{ok:false,error:'DISCOUNT_EXPIRED',code:normalized,subtotal:base,discount:0,total:base}
+  if(row.max_uses>0&&row.used_count>=row.max_uses)return{ok:false,error:'DISCOUNT_LIMIT_REACHED',code:normalized,subtotal:base,discount:0,total:base}
+  const percentDiscount=Math.round(base*(Math.max(0,Number(row.percent)||0)/100))
+  const fixedDiscount=Math.max(0,Number(row.amount)||0)
+  const discount=Math.min(base,Math.max(percentDiscount,fixedDiscount))
+  if(consume&&discount>0)db.prepare('UPDATE discount_codes SET used_count=used_count+1,updated_at=? WHERE id=?').run(now(),row.id)
+  return{ok:true,code:row.code,title:row.title,subtotal:base,discount,total:Math.max(0,base-discount),coupon:{id:row.id,code:row.code,title:row.title,percent:row.percent,amount:row.amount}}
+ }
+ function recordPaymentOrder(data={}){
+  const stamp=now(),status=['pending','paid','failed','refunded','cancelled'].includes(data.status)?data.status:'paid'
+  db.prepare('INSERT INTO payment_orders(user_id,subscription_id,plan,method,gateway_id,gateway_name,coupon_code,subtotal,discount,amount,status,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+   .run(data.userId||data.user_id||null,data.subscriptionId||data.subscription_id||null,String(data.plan||'').slice(0,40),String(data.method||'sandbox').slice(0,40),data.gatewayId||data.gateway_id||null,String(data.gatewayName||data.gateway_name||'').slice(0,120),couponCode(data.couponCode||data.coupon_code||''),Math.max(0,Math.round(Number(data.subtotal)||0)),Math.max(0,Math.round(Number(data.discount)||0)),Math.max(0,Math.round(Number(data.amount)||0)),status,String(data.note||'').slice(0,1000),stamp,stamp)
+  return db.prepare('SELECT * FROM payment_orders WHERE id=last_insert_rowid()').get()
+ }
+ function adminOrders(limit=200){return db.prepare('SELECT o.*,u.phone,u.name FROM payment_orders o LEFT JOIN users u ON u.id=o.user_id ORDER BY o.id DESC LIMIT ?').all(Math.min(500,Math.max(1,Number(limit)||200)))}
+ function updateOrder(id,data={}){const current=db.prepare('SELECT * FROM payment_orders WHERE id=?').get(id);if(!current)return null;const status=['pending','paid','failed','refunded','cancelled'].includes(data.status)?data.status:current.status,note=String(data.note??current.note??'').slice(0,1000);db.prepare('UPDATE payment_orders SET status=?,note=?,updated_at=? WHERE id=?').run(status,note,now(),id);return db.prepare('SELECT * FROM payment_orders WHERE id=?').get(id)}
  // Two columns the showroom tools were missing. `market_at_add` freezes what the
  // car was worth the day it was taken in, which is the only honest way to say
  // "the market has moved under you" — recomputing history from today's baseline
  // would quietly rewrite it. `inventory_id` ties a buyer to a specific car.
  const inventoryColumns=new Set(db.prepare('PRAGMA table_info(dealer_inventory)').all().map(row=>row.name))
  if(!inventoryColumns.has('market_at_add'))db.exec('ALTER TABLE dealer_inventory ADD COLUMN market_at_add INTEGER DEFAULT 0')
+ if(!inventoryColumns.has('sale_price'))db.exec('ALTER TABLE dealer_inventory ADD COLUMN sale_price INTEGER DEFAULT 0')
+ if(!inventoryColumns.has('sold_at'))db.exec('ALTER TABLE dealer_inventory ADD COLUMN sold_at TEXT')
  const leadColumns=new Set(db.prepare('PRAGMA table_info(dealer_leads)').all().map(row=>row.name))
  if(!leadColumns.has('inventory_id'))db.exec('ALTER TABLE dealer_leads ADD COLUMN inventory_id INTEGER')
+ if(!leadColumns.has('source'))db.exec("ALTER TABLE dealer_leads ADD COLUMN source TEXT DEFAULT ''")
+ if(!leadColumns.has('priority'))db.exec("ALTER TABLE dealer_leads ADD COLUMN priority TEXT DEFAULT 'normal'")
+ if(!leadColumns.has('next_follow_at'))db.exec('ALTER TABLE dealer_leads ADD COLUMN next_follow_at TEXT')
+ if(!leadColumns.has('last_contact_at'))db.exec('ALTER TABLE dealer_leads ADD COLUMN last_contact_at TEXT')
 
  function dealerInventory(userId){return db.prepare('SELECT * FROM dealer_inventory WHERE user_id=? ORDER BY id DESC').all(userId)}
- function saveDealerInventory(userId,data,id=null){const stamp=now(),marketAtAdd=Math.max(0,Number(data.market_at_add)||0),values=[String(data.title||'').trim().slice(0,120),String(data.brand||'').slice(0,60),String(data.model||'').slice(0,80),Number(data.year)||0,Math.max(0,Number(data.buy_price)||0),Math.max(0,Number(data.target_price)||0),['available','reserved','sold','repair'].includes(data.status)?data.status:'available',String(data.notes||'').slice(0,1000)];if(values[0].length<2)throw new Error('INVALID_TITLE');if(id){const result=db.prepare('UPDATE dealer_inventory SET title=?,brand=?,model=?,year=?,buy_price=?,target_price=?,status=?,notes=?,updated_at=? WHERE id=? AND user_id=?').run(...values,stamp,id,userId);if(!result.changes)return null}else db.prepare('INSERT INTO dealer_inventory(user_id,title,brand,model,year,buy_price,target_price,status,notes,market_at_add,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(userId,...values,marketAtAdd,stamp,stamp);return dealerInventory(userId)}
+ function saveDealerInventory(userId,data={},id=null){
+  const stamp=now(),current=id?db.prepare('SELECT * FROM dealer_inventory WHERE id=? AND user_id=?').get(id,userId):null
+  if(id&&!current)return null
+  const status=['available','reserved','sold','repair'].includes(data.status)?data.status:(current?.status||'available')
+  const salePrice=Math.max(0,Number(data.sale_price??current?.sale_price)||0)
+  const soldAt=status==='sold'?(isoOrNull(data.sold_at??current?.sold_at)||stamp):null
+  const marketAtAdd=Math.max(0,Number(data.market_at_add??current?.market_at_add)||0)
+  const values=[
+   String(data.title??current?.title??'').trim().slice(0,120),String(data.brand??current?.brand??'').slice(0,60),String(data.model??current?.model??'').slice(0,80),Number(data.year??current?.year)||0,
+   Math.max(0,Number(data.buy_price??current?.buy_price)||0),Math.max(0,Number(data.target_price??current?.target_price)||0),status,String(data.notes??current?.notes??'').slice(0,1000),marketAtAdd,salePrice,soldAt,
+  ]
+  if(values[0].length<2)throw new Error('INVALID_TITLE')
+  if(id){const result=db.prepare('UPDATE dealer_inventory SET title=?,brand=?,model=?,year=?,buy_price=?,target_price=?,status=?,notes=?,market_at_add=?,sale_price=?,sold_at=?,updated_at=? WHERE id=? AND user_id=?').run(...values,stamp,id,userId);if(!result.changes)return null}
+  else db.prepare('INSERT INTO dealer_inventory(user_id,title,brand,model,year,buy_price,target_price,status,notes,market_at_add,sale_price,sold_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(userId,...values,stamp,stamp)
+  return dealerInventory(userId)
+ }
  function deleteDealerInventory(userId,id){return db.prepare('DELETE FROM dealer_inventory WHERE id=? AND user_id=?').run(id,userId)}
- function dealerLeads(userId){return db.prepare('SELECT * FROM dealer_leads WHERE user_id=? ORDER BY id DESC').all(userId)}
- function saveDealerLead(userId,data,id=null){const stamp=now(),values=[String(data.name||'').trim().slice(0,100),String(data.phone||'').slice(0,30),String(data.vehicle||'').slice(0,120),Math.max(0,Number(data.budget)||0),['new','contacted','negotiating','won','lost'].includes(data.status)?data.status:'new',String(data.notes||'').slice(0,1000)];if(values[0].length<2)throw new Error('INVALID_NAME');const linkedId=Number(data.inventory_id)||0,owned=linkedId?db.prepare('SELECT id FROM dealer_inventory WHERE id=? AND user_id=?').get(linkedId,userId):null,inventoryId=owned?linkedId:null;if(id){const result=db.prepare('UPDATE dealer_leads SET name=?,phone=?,vehicle=?,budget=?,status=?,notes=?,inventory_id=?,updated_at=? WHERE id=? AND user_id=?').run(...values,inventoryId,stamp,id,userId);if(!result.changes)return null}else db.prepare('INSERT INTO dealer_leads(user_id,name,phone,vehicle,budget,status,notes,inventory_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(userId,...values,inventoryId,stamp,stamp);return dealerLeads(userId)}
+ function dealerLeads(userId){return db.prepare('SELECT * FROM dealer_leads WHERE user_id=? ORDER BY COALESCE(next_follow_at,created_at) ASC,id DESC').all(userId)}
+ function saveDealerLead(userId,data={},id=null){
+  const stamp=now(),current=id?db.prepare('SELECT * FROM dealer_leads WHERE id=? AND user_id=?').get(id,userId):null
+  if(id&&!current)return null
+  const status=['new','contacted','negotiating','won','lost'].includes(data.status)?data.status:(current?.status||'new')
+  const touched=['contacted','negotiating','won','lost'].includes(status)&&current?.status!==status
+  const nextFollow=isoOrNull(data.next_follow_at??current?.next_follow_at)
+  const lastContact=data.last_contact_at!==undefined?isoOrNull(data.last_contact_at):(current?.last_contact_at||(touched?stamp:null))
+  const priority=['cold','normal','hot'].includes(data.priority)?data.priority:(current?.priority||'normal')
+  const values=[String(data.name??current?.name??'').trim().slice(0,100),String(data.phone??current?.phone??'').slice(0,30),String(data.vehicle??current?.vehicle??'').slice(0,120),Math.max(0,Number(data.budget??current?.budget)||0),status,String(data.notes??current?.notes??'').slice(0,1000),String(data.source??current?.source??'').slice(0,80),priority,nextFollow,lastContact]
+  if(values[0].length<2)throw new Error('INVALID_NAME')
+  const linkedId=Number(data.inventory_id??current?.inventory_id)||0,owned=linkedId?db.prepare('SELECT id FROM dealer_inventory WHERE id=? AND user_id=?').get(linkedId,userId):null,inventoryId=owned?linkedId:null
+  if(id){const result=db.prepare('UPDATE dealer_leads SET name=?,phone=?,vehicle=?,budget=?,status=?,notes=?,source=?,priority=?,next_follow_at=?,last_contact_at=?,inventory_id=?,updated_at=? WHERE id=? AND user_id=?').run(...values,inventoryId,stamp,id,userId);if(!result.changes)return null}
+  else db.prepare('INSERT INTO dealer_leads(user_id,name,phone,vehicle,budget,status,notes,source,priority,next_follow_at,last_contact_at,inventory_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(userId,...values,inventoryId,stamp,stamp)
+  return dealerLeads(userId)
+ }
  function deleteDealerLead(userId,id){return db.prepare('DELETE FROM dealer_leads WHERE id=? AND user_id=?').run(id,userId)}
  function listPayloads(category='light'){
   return db.prepare("SELECT payload,last_seen_at FROM listings WHERE category=? AND status='active'").all(category)
    .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
    .filter(Boolean)
+ }
+ function subscription(uid){return db.prepare("SELECT * FROM subscriptions WHERE user_id=? ORDER BY id DESC LIMIT 1").get(uid)}
+ function grantSubscription(userId,{plan='free',status='active',days=30,amount=null,expires_at=null}={}){
+  const user=db.prepare('SELECT * FROM users WHERE id=?').get(userId)
+  if(!user)return null
+  const managed=db.prepare('SELECT * FROM subscription_plans WHERE id=?').get(String(plan))
+  if(!managed)return null
+  const safeStatus=['active','expired','cancelled','pending'].includes(status)?status:'active'
+  const start=new Date()
+  const dayCount=subscriptionDayCount(days)
+  const expiry=expires_at?new Date(expires_at):new Date(Date.now()+dayCount*86400000)
+  if(!Number.isFinite(expiry.getTime()))return null
+  if(safeStatus==='active')db.prepare("UPDATE subscriptions SET status='expired' WHERE user_id=? AND status='active'").run(userId)
+  const finalAmount=Number.isFinite(Number(amount))?Math.max(0,Number(amount)):Number(managed.price)||0
+  db.prepare('INSERT INTO subscriptions(user_id,plan,status,amount,started_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?)').run(userId,String(plan),safeStatus,finalAmount,start.toISOString(),expiry.toISOString(),now())
+  return subscription(userId)
+ }
+ function updateSubscription(id,{plan,status,amount,expires_at,days}={}){
+  const current=db.prepare('SELECT * FROM subscriptions WHERE id=?').get(id)
+  if(!current)return null
+  const nextPlan=plan?String(plan):current.plan
+  if(plan&&!db.prepare('SELECT id FROM subscription_plans WHERE id=?').get(nextPlan))return null
+  const nextStatus=['active','expired','cancelled','pending'].includes(status)?status:current.status
+  const nextAmount=Number.isFinite(Number(amount))?Math.max(0,Number(amount)):current.amount
+  let nextExpiry=current.expires_at
+  if(expires_at){const parsed=new Date(expires_at);if(Number.isFinite(parsed.getTime()))nextExpiry=parsed.toISOString();else return null}
+  else if(days){nextExpiry=new Date(Date.now()+subscriptionDayCount(days)*86400000).toISOString()}
+  if(nextStatus==='active')db.prepare("UPDATE subscriptions SET status='expired' WHERE user_id=? AND status='active' AND id!=?").run(current.user_id,id)
+  db.prepare('UPDATE subscriptions SET plan=?,status=?,amount=?,expires_at=? WHERE id=?').run(nextPlan,nextStatus,nextAmount,nextExpiry,id)
+  return db.prepare('SELECT * FROM subscriptions WHERE id=?').get(id)
+ }
+ function createAdminSubscription(data={}){
+  const user=ensureAdminUser(data)
+  if(!user)return null
+  return grantSubscription(user.id,data)
  }
  // Cheap freshness signature so higher layers can memoize expensive analysis per category.
  function listingsSignature(category='light'){
@@ -321,7 +457,7 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
    .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
    .filter(Boolean)
  }
- return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,notifications,unreadNotifications,markNotificationsRead,saveListing,unsaveListing,savedListings,savedTokens,analyticsSeries,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
+ return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,notifications,unreadNotifications,markNotificationsRead,saveListing,unsaveListing,savedListings,savedTokens,analyticsSeries,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,discountCodes,saveDiscountCode,deleteDiscountCode,discountByCode,applyDiscount,recordPaymentOrder,adminOrders,updateOrder,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,userByPhone,userById,createAdminUser,createAdminSubscription,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),
@@ -330,22 +466,23 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  deleteAlert:(uid,id)=>db.prepare('DELETE FROM alerts WHERE id=? AND user_id=?').run(id,uid).changes>0,
  countAlerts:uid=>db.prepare('SELECT COUNT(*) n FROM alerts WHERE user_id=?').get(uid).n,
  createTicket:(uid,b)=>db.prepare('INSERT INTO tickets(user_id,subject,message,created_at) VALUES(?,?,?,?)').run(uid,b.subject,b.message,now()),
- subscribe:(uid,plan,amount)=>{const start=new Date(),end=new Date(Date.now()+30*86400000);db.prepare("UPDATE subscriptions SET status='expired' WHERE user_id=? AND status='active'").run(uid);db.prepare('INSERT INTO subscriptions(user_id,plan,status,amount,started_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?)').run(uid,plan,'active',amount,start.toISOString(),end.toISOString(),now());return{plan,status:'active',expiresAt:end.toISOString()}},subscription:uid=>db.prepare("SELECT * FROM subscriptions WHERE user_id=? ORDER BY id DESC LIMIT 1").get(uid),
+ subscribe:(uid,plan,amount)=>{const row=grantSubscription(uid,{plan,amount,status:'active',days:30});return row?{id:row.id,userId:row.user_id,plan:row.plan,status:row.status,amount:row.amount,expiresAt:row.expires_at}:null},subscription,grantSubscription,updateSubscription,
  adminUsers:({query='',role='',limit=50,offset=0}={})=>{
   const where=[],params=[]
   if(query){where.push('(u.phone LIKE ? OR u.name LIKE ?)');params.push(`%${query}%`,`%${query}%`)}
   if(role==='admin'||role==='user'){where.push('u.role=?');params.push(role)}
   const clause=where.length?`WHERE ${where.join(' AND ')}`:''
   const total=db.prepare(`SELECT COUNT(*) n FROM users u ${clause}`).get(...params).n
-  const items=db.prepare(`SELECT u.id,u.phone,u.name,u.city,u.role,u.created_at,(SELECT plan FROM subscriptions s WHERE s.user_id=u.id AND s.status='active' ORDER BY id DESC LIMIT 1) plan FROM users u ${clause} ORDER BY u.id DESC LIMIT ? OFFSET ?`).all(...params,Math.min(200,Math.max(1,limit)),Math.max(0,offset))
+  const items=db.prepare(`SELECT u.id,u.phone,u.name,u.city,u.role,u.created_at,(SELECT plan FROM subscriptions s WHERE s.user_id=u.id AND s.status='active' ORDER BY id DESC LIMIT 1) plan,(SELECT status FROM subscriptions s WHERE s.user_id=u.id ORDER BY id DESC LIMIT 1) subscription_status,(SELECT expires_at FROM subscriptions s WHERE s.user_id=u.id ORDER BY id DESC LIMIT 1) subscription_expires_at FROM users u ${clause} ORDER BY u.id DESC LIMIT ? OFFSET ?`).all(...params,Math.min(200,Math.max(1,limit)),Math.max(0,offset))
   return{items,total}
  },
  adminSubscriptions:()=>db.prepare('SELECT s.*,u.phone,u.name FROM subscriptions s JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 200').all(),
  adminTickets:()=>db.prepare('SELECT t.*,u.phone,u.name FROM tickets t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.id DESC LIMIT 200').all(),
  adminListings:()=>db.prepare('SELECT token,title,city,price,score,category,crawl_scope,status,missing_count,first_seen_at,last_seen_at,last_verified_at,inactive_at,removed_at FROM listings ORDER BY last_seen_at DESC LIMIT 200').all(),
+ updateAdminUser:(id,data={})=>{const current=db.prepare('SELECT * FROM users WHERE id=?').get(id);if(!current)return null;const role=['user','admin'].includes(data.role)?data.role:current.role;const name=String(data.name??current.name).slice(0,80);const city=String(data.city??current.city).slice(0,40);db.prepare('UPDATE users SET role=?,name=?,city=? WHERE id=?').run(role,name,city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  setUserRole:(id,role)=>db.prepare('UPDATE users SET role=? WHERE id=?').run(role,id),
  setTicketStatus:(id,status)=>db.prepare('UPDATE tickets SET status=? WHERE id=?').run(status,id),
- setSubscriptionStatus:(id,status)=>db.prepare('UPDATE subscriptions SET status=? WHERE id=?').run(status,id),
+ setSubscriptionStatus:(id,status)=>updateSubscription(id,{status}),
  setListingStatus:(token,status)=>db.prepare("UPDATE listings SET status=?,inactive_at=CASE WHEN ?='inactive' THEN COALESCE(inactive_at,?) ELSE inactive_at END,removed_at=CASE WHEN ?='removed' THEN COALESCE(removed_at,?) ELSE removed_at END WHERE token=?").run(status,status,now(),status,now(),token),
  settings:()=>Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map(x=>[x.key,x.value])),
  updateSettings:values=>{const q=db.prepare('INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at');for(const[key,value]of Object.entries(values))if(Object.hasOwn(defaults,key))q.run(key,String(value).slice(0,10000),now());return Object.fromEntries(db.prepare('SELECT key,value FROM settings').all().map(x=>[x.key,x.value]))}

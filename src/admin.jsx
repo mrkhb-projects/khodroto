@@ -5,14 +5,15 @@ import{IntegrationsManager}from'./admin-integrations'
 const n=value=>new Intl.NumberFormat('fa-IR').format(value||0)
 const money=value=>`${n(Math.round((value||0)/1e6))} م.ت`
 const date=value=>value?new Date(value).toLocaleString('fa-IR'):'—'
+const localDateTime=value=>{if(!value)return'';const d=new Date(value);if(!Number.isFinite(d.getTime()))return'';const pad=v=>String(v).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`}
 const listingStatus={active:'فعال',stale:'در انتظار بررسی',inactive:'غیرفعال',removed:'حذف‌شده'}
 const ticketStatus={open:'باز',pending:'در حال بررسی',closed:'بسته'}
 const subscriptionStatus={active:'فعال',pending:'در انتظار',expired:'منقضی',cancelled:'لغوشده'}
 
 export function AdminPage(){
- const[tab,setTab]=useState('overview'),[stats,setStats]=useState(null),[status,setStatus]=useState(null),[data,setData]=useState([]),[settings,setSettings]=useState({}),[integrations,setIntegrations]=useState({payment:[],sms:[]}),[slides,setSlides]=useState([]),[plans,setPlans]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[menu,setMenu]=useState(false),[authRequired,setAuthRequired]=useState(false),[notice,setNotice]=useState('')
+ const[tab,setTab]=useState('overview'),[stats,setStats]=useState(null),[status,setStatus]=useState(null),[data,setData]=useState([]),[settings,setSettings]=useState({}),[integrations,setIntegrations]=useState({payment:[],sms:[]}),[slides,setSlides]=useState([]),[plans,setPlans]=useState([]),[orders,setOrders]=useState([]),[discounts,setDiscounts]=useState([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[menu,setMenu]=useState(false),[authRequired,setAuthRequired]=useState(false),[notice,setNotice]=useState('')
  async function api(url,options){const response=await fetch(url,options);if(response.status===401||response.status===403){setAuthRequired(true);setError(response.status===401?'برای مشاهده پنل، ورود امن مدیر لازم است.':'این حساب دسترسی مدیریت ندارد.');throw Error('AUTH')}const body=await response.json();if(!response.ok){const requestError=Error(body.error||'REQUEST_FAILED');requestError.data=body;throw requestError}return body}
- async function load(next=tab){setBusy(true);setError('');try{const[summary,integration]=await Promise.all([api('/api/admin/stats'),fetch('/api/integration/status').then(r=>r.json())]);setStats(summary);setStatus(integration);if(next==='users')setData((await api('/api/admin/users')).items);if(next==='plans')setPlans((await api('/api/admin/plans')).items);if(next==='subscriptions')setData((await api('/api/admin/subscriptions')).items);if(next==='tickets')setData((await api('/api/admin/tickets')).items);if(next==='listings')setData((await api('/api/admin/listings')).items);if(next==='content'){const result=await api('/api/admin/slides');setSlides(result.items)}if(['audit','reports'].includes(next))setData((await api('/api/admin/audits')).items);if(next==='finance')setData((await api('/api/admin/subscriptions')).items);if(['settings','taxonomy','pages','faq','navigation','notifications','seo','appearance','crawler','security','backup','promotions'].includes(next)){const general=await api('/api/admin/settings');setSettings(general.settings)}if(next==='settings'){const[payment,sms]=await Promise.all([api('/api/admin/integrations/payment'),api('/api/admin/integrations/sms')]);setIntegrations({payment:payment.items,sms:sms.items})}}catch(error){if(error.message!=='AUTH')setError('دریافت اطلاعات مدیریت انجام نشد.')}finally{setBusy(false)}}
+ async function load(next=tab){setBusy(true);setError('');try{const[summary,integration]=await Promise.all([api('/api/admin/stats'),fetch('/api/integration/status').then(r=>r.json())]);setStats(summary);setStatus(integration);if(next==='users')setData((await api('/api/admin/users')).items);if(next==='plans')setPlans((await api('/api/admin/plans')).items);if(next==='subscriptions')setData((await api('/api/admin/subscriptions')).items);if(next==='tickets')setData((await api('/api/admin/tickets')).items);if(next==='listings')setData((await api('/api/admin/listings')).items);if(next==='content'){const result=await api('/api/admin/slides');setSlides(result.items)}if(['audit','reports'].includes(next))setData((await api('/api/admin/audits')).items);if(next==='finance')setOrders((await api('/api/admin/orders')).items);if(['settings','taxonomy','pages','faq','navigation','notifications','seo','appearance','crawler','security','backup','promotions'].includes(next)){const general=await api('/api/admin/settings');setSettings(general.settings)}if(next==='promotions')setDiscounts((await api('/api/admin/discounts')).items);if(next==='settings'){const[payment,sms]=await Promise.all([api('/api/admin/integrations/payment'),api('/api/admin/integrations/sms')]);setIntegrations({payment:payment.items,sms:sms.items})}}catch(error){if(error.message!=='AUTH')setError('دریافت اطلاعات مدیریت انجام نشد.')}finally{setBusy(false)}}
  useEffect(()=>{load(tab)},[tab])
  async function patch(url,body){setNotice('');await api(url,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(body)});await load(tab);setNotice('تغییرات با موفقیت ذخیره و در سامانه ثبت شد.')}
  async function syncCatalog(){setBusy(true);setError('');setNotice('');try{const result=await api('/api/admin/catalog/sync',{method:'POST'});setNotice(`ساختار دیوار همگام شد: ${n(result.cities)} شهر، ${n(result.categories.length)} دسته و ${n(result.brands.length)} برند.`);await load('taxonomy')}catch(error){setError('همگام‌سازی زنده دسته‌ها از دیوار انجام نشد؛ اتصال ایران یا رله خصوصی را بررسی کنید.')}finally{setBusy(false)}}
@@ -28,9 +29,9 @@ export function AdminPage(){
  ]
  const tabs=menuGroups.flatMap(group=>group[1]),current=tabs.find(item=>item[0]===tab)
  if(authRequired)return <AdminLogin onSuccess={()=>{setAuthRequired(false);setError('');load(tab)}}/>
- return <main className="admin-shell"><aside className={'admin-sidebar '+(menu?'open':'')}><div className="admin-sidebar-brand"><img src="/brand/khodroto-mark.svg"/><div><b>خودروتو</b><span>مرکز مدیریت</span></div><button onClick={()=>setMenu(false)}><X/></button></div><nav>{menuGroups.map(([group,items])=><div className="admin-nav-group" key={group}><span>{group}</span>{items.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>choose(id)} key={id}><Icon/>{label}{id==='tickets'&&stats?.tickets>0&&<i>{n(stats.tickets)}</i>}</button>)}</div>)}</nav><div className="admin-sidebar-foot"><span className={status?.connected?'online':'offline'}><i/>{status?.connected?'سامانه متصل':'داده واقعی قطع است'}</span><a href="/">مشاهده وب‌سایت <ChevronLeft/></a></div></aside><section className="admin-workspace"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMenu(true)}><Menu/></button><div><span>پنل مدیریت فارسی خودروتو</span><h1>{current?.[1]}</h1></div><div className="admin-top-actions"><span>{new Date().toLocaleDateString('fa-IR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span><button onClick={()=>load(tab)}><RefreshCw className={busy?'spin':''}/> تازه‌سازی</button></div></header><div className="admin-canvas">{error&&<div className="admin-warning"><AlertTriangle/>{error}</div>}{notice&&<div className="admin-success"><ShieldCheck/>{notice}</div>}{tab==='overview'&&<Overview stats={stats} status={status} refresh={refreshCrawler} busy={busy} navigate={choose}/>} {tab==='users'&&<UsersPanel patch={patch}/>} {tab==='plans'&&<PlansPanel items={plans} setItems={setPlans} api={api}/>} {tab==='subscriptions'&&<SubscriptionsPanel items={data} patch={patch}/>} {tab==='tickets'&&<TicketsPanel items={data} patch={patch}/>} {tab==='listings'&&<ListingsPanel items={data} patch={patch}/>} {tab==='content'&&<ContentPanel items={slides} reload={()=>load('content')} api={api}/>} {tab==='taxonomy'&&<CatalogPanel config={configPanels.taxonomy} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)} sync={syncCatalog} busy={busy}/>} {tab==='pages'&&<ConfigPanel config={configPanels.pages} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='faq'&&<ConfigPanel config={configPanels.faq} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='navigation'&&<ConfigPanel config={configPanels.navigation} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='notifications'&&<ConfigPanel config={configPanels.notifications} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='seo'&&<ConfigPanel config={configPanels.seo} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='appearance'&&<><ConfigPanel config={configPanels.appearance} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/></>} {tab==='health'&&<HealthPanel/>}
+ return <main className="admin-shell"><aside className={'admin-sidebar '+(menu?'open':'')}><div className="admin-sidebar-brand"><img src="/brand/khodroto-mark.svg"/><div><b>خودروتو</b><span>مرکز مدیریت</span></div><button onClick={()=>setMenu(false)}><X/></button></div><nav>{menuGroups.map(([group,items])=><div className="admin-nav-group" key={group}><span>{group}</span>{items.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>choose(id)} key={id}><Icon/>{label}{id==='tickets'&&stats?.tickets>0&&<i>{n(stats.tickets)}</i>}</button>)}</div>)}</nav><div className="admin-sidebar-foot"><span className={status?.connected?'online':'offline'}><i/>{status?.connected?'سامانه متصل':'داده واقعی قطع است'}</span><a href="/">مشاهده وب‌سایت <ChevronLeft/></a></div></aside><section className="admin-workspace"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMenu(true)}><Menu/></button><div><span>پنل مدیریت فارسی خودروتو</span><h1>{current?.[1]}</h1></div><div className="admin-top-actions"><span>{new Date().toLocaleDateString('fa-IR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span><button onClick={()=>load(tab)}><RefreshCw className={busy?'spin':''}/> تازه‌سازی</button></div></header><div className="admin-canvas">{error&&<div className="admin-warning"><AlertTriangle/>{error}</div>}{notice&&<div className="admin-success"><ShieldCheck/>{notice}</div>}{tab==='overview'&&<Overview stats={stats} status={status} refresh={refreshCrawler} busy={busy} navigate={choose}/>} {tab==='users'&&<UsersPanel patch={patch} api={api}/>} {tab==='plans'&&<PlansPanel items={plans} setItems={setPlans} api={api}/>} {tab==='subscriptions'&&<SubscriptionsPanel items={data} patch={patch} api={api} reload={()=>load('subscriptions')}/>} {tab==='tickets'&&<TicketsPanel items={data} patch={patch}/>} {tab==='listings'&&<ListingsPanel items={data} patch={patch}/>} {tab==='content'&&<ContentPanel items={slides} reload={()=>load('content')} api={api}/>} {tab==='taxonomy'&&<CatalogPanel config={configPanels.taxonomy} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)} sync={syncCatalog} busy={busy}/>} {tab==='pages'&&<ConfigPanel config={configPanels.pages} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='faq'&&<ConfigPanel config={configPanels.faq} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='navigation'&&<ConfigPanel config={configPanels.navigation} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='notifications'&&<ConfigPanel config={configPanels.notifications} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='seo'&&<ConfigPanel config={configPanels.seo} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='appearance'&&<><ConfigPanel config={configPanels.appearance} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/></>} {tab==='health'&&<HealthPanel/>}
    {tab==='sellers'&&<SellersPanel/>}
-   {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='finance'&&<FinancePanel items={data} patch={patch}/>} {tab==='reports'&&<AnalyticsPanel/>}
+   {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<PromotionsPanel settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} discounts={discounts} setDiscounts={setDiscounts} api={api} reload={()=>load('promotions')}/>} {tab==='finance'&&<FinancePanel items={orders} patch={patch}/>} {tab==='reports'&&<AnalyticsPanel/>}
    {tab==='reports'&&<ReportsPanel stats={stats} items={data}/>} {tab==='settings'&&<><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><IntegrationsManager value={integrations} reload={()=>load('settings')}/></>} {tab==='audit'&&<AuditPanel items={data}/>}</div></section></main>
 }
 
@@ -251,7 +252,7 @@ function Overview({stats,status,refresh,busy,navigate}){const cards=[[Car,'کل 
 
 function PanelTools({query,setQuery,children}){return <div className="admin-list-tools"><label><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="جست‌وجو در این بخش..."/></label>{children}</div>}
 function Table({headers,rows,empty='هنوز داده‌ای ثبت نشده است.'}){return <section className="admin-table-wrap"><table className="admin-table"><thead><tr>{headers.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{rows.length?rows.map((row,index)=><tr key={index}>{row.map((cell,cellIndex)=><td key={cellIndex}>{cell}</td>)}</tr>):<tr><td colSpan={headers.length}>{empty}</td></tr>}</tbody></table></section>}
-function UsersPanel({patch}){
+function UsersPanel({patch,api}){
  // Was: fetch everything, filter in the browser. With a few thousand users that
  // ships the whole table on every tab switch and silently truncates at the SQL
  // LIMIT, so an admin searching for someone who sits past it finds nothing.
@@ -259,23 +260,52 @@ function UsersPanel({patch}){
  const [role,setRole]=useState('')
  const [page,setPage]=useState(0)
  const [result,setResult]=useState({items:[],total:0})
+ const [plans,setPlans]=useState([])
  const [loading,setLoading]=useState(false)
+ const [note,setNote]=useState('')
+ const [newUser,setNewUser]=useState({phone:'',name:'',city:'1',role:'user'})
  const pageSize=50
+ const paramsFor=()=>{const params=new URLSearchParams({limit:String(pageSize),offset:String(page*pageSize)});if(query.trim())params.set('query',query.trim());if(role)params.set('role',role);return params}
+ const refreshUsers=async()=>{const fresh=await api(`/api/admin/users?${paramsFor()}`);setResult(fresh)}
  useEffect(()=>{
   let alive=true
   setLoading(true)
-  const params=new URLSearchParams({limit:String(pageSize),offset:String(page*pageSize)})
-  if(query.trim())params.set('query',query.trim())
-  if(role)params.set('role',role)
+  const params=paramsFor()
   const timer=setTimeout(()=>{
    fetch(`/api/admin/users?${params}`).then(r=>r.ok?r.json():{items:[],total:0})
     .then(data=>{if(alive)setResult(data)}).finally(()=>{if(alive)setLoading(false)})
-  },250) // debounce so typing does not fire a query per keystroke
+  },250)
   return()=>{alive=false;clearTimeout(timer)}
  },[query,role,page])
+ useEffect(()=>{api('/api/admin/plans').then(result=>setPlans(result.items||[])).catch(()=>setPlans([]))},[])
  useEffect(()=>{setPage(0)},[query,role])
  const pages=Math.max(1,Math.ceil(result.total/pageSize))
+ async function createUser(event){
+  event.preventDefault();setNote('')
+  try{
+   const created=await api('/api/admin/users',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(newUser)})
+   setNewUser({phone:'',name:'',city:'1',role:'user'})
+   setNote(`کاربر ${created.user.phone} ساخته شد و از همین پنل قابل مدیریت است.`)
+   await refreshUsers()
+  }catch(error){setNote(error.message==='USER_EXISTS'?'این شماره قبلاً در کاربران وجود دارد.':'کاربر ساخته نشد؛ شماره موبایل باید با 09 شروع شود و ۱۱ رقم باشد.')}
+ }
+ async function grant(user,draft){
+  setNote('')
+  await api(`/api/admin/users/${user.id}/subscription`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(draft)})
+  setNote(`اشتراک ${draft.plan} برای ${user.phone} فعال/ثبت شد.`)
+  await refreshUsers()
+ }
  return <>
+  <section className="admin-panel">
+   <div className="admin-panel-title"><div><h2>ساخت کاربر توسط مدیر</h2><p>بدون نیاز به OTP، شماره را وارد کنید؛ بعداً می‌توانید نقش و اشتراک را همین‌جا تغییر دهید.</p></div></div>
+   <form className="admin-settings" onSubmit={createUser}>
+    <label>شماره موبایل<input dir="ltr" required placeholder="09123456789" value={newUser.phone} onChange={e=>setNewUser({...newUser,phone:e.target.value})}/></label>
+    <label>نام<input placeholder="نام کاربر" value={newUser.name} onChange={e=>setNewUser({...newUser,name:e.target.value})}/></label>
+    <label>شهر/کد شهر<input value={newUser.city} onChange={e=>setNewUser({...newUser,city:e.target.value})}/></label>
+    <label>نقش<select value={newUser.role} onChange={e=>setNewUser({...newUser,role:e.target.value})}><option value="user">کاربر</option><option value="admin">مدیر</option></select></label>
+    <button className="primary"><Plus/> ساخت کاربر</button>
+   </form>
+  </section>
   <PanelTools query={query} setQuery={setQuery}>
    <span>{n(result.total)} کاربر</span>
    <select value={role} onChange={event=>setRole(event.target.value)}>
@@ -283,9 +313,10 @@ function UsersPanel({patch}){
    </select>
    <a className="secondary" href="/api/admin/export/users"><Download/> خروجی CSV</a>
   </PanelTools>
-  <Table headers={['کاربر','موبایل','شهر','پلن','نقش','عضویت','عملیات']} rows={result.items.map(item=>[
-   item.name,item.phone,item.city,item.plan||'رایگان',item.role==='admin'?'مدیر':'کاربر',item.created_at?.slice(0,10)||'—',
-   <button className="secondary" key={item.id} onClick={()=>patch(`/api/admin/users/${item.id}`,{role:item.role==='admin'?'user':'admin'})}>{item.role==='admin'?'سلب دسترسی مدیر':'ارتقا به مدیر'}</button>,
+  {note&&<div className="admin-success" style={{margin:'0 0 12px'}}><ShieldCheck/>{note}</div>}
+  <Table headers={['کاربر','موبایل','شهر','اشتراک فعلی','نقش','عضویت','مدیریت کامل کاربر و اشتراک']} rows={result.items.map(item=>[
+   item.name,item.phone,item.city,<div><b>{item.plan||'رایگان'}</b><small>{item.subscription_expires_at?` تا ${date(item.subscription_expires_at)}`:''}</small></div>,item.role==='admin'?'مدیر':'کاربر',item.created_at?.slice(0,10)||'—',
+   <UserActions key={item.id} user={item} plans={plans} api={api} grant={grant} onSaved={refreshUsers}/>,
   ])}/>
   {loading&&<p style={{padding:'0 16px'}}>در حال جست‌وجو…</p>}
   {pages>1&&<div className="admin-actions-row">
@@ -295,8 +326,74 @@ function UsersPanel({patch}){
   </div>}
  </>
 }
+function UserActions({user,plans,api,grant,onSaved}){
+ const defaultPlan=user.plan||plans.find(item=>item.id!=='free')?.id||plans[0]?.id||'pro'
+ const [profile,setProfile]=useState({name:user.name||'',city:user.city||'1',role:user.role||'user'})
+ const [sub,setSub]=useState({plan:defaultPlan,days:'30',amount:'',status:'active'})
+ const [busy,setBusy]=useState('')
+ async function saveProfile(){setBusy('profile');try{await api(`/api/admin/users/${user.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(profile)});await onSaved()}finally{setBusy('')}}
+ async function activate(){setBusy('sub');try{await grant(user,{...sub,days:Number(sub.days)||30,amount:sub.amount===''?undefined:Number(sub.amount)})}finally{setBusy('')}}
+ return <div className="table-actions user-admin-actions">
+  <input style={{width:110}} value={profile.name} onChange={e=>setProfile({...profile,name:e.target.value})} title="نام"/>
+  <input style={{width:70}} value={profile.city} onChange={e=>setProfile({...profile,city:e.target.value})} title="شهر"/>
+  <select value={profile.role} onChange={e=>setProfile({...profile,role:e.target.value})}><option value="user">کاربر</option><option value="admin">مدیر</option></select>
+  <button className="secondary" disabled={busy==='profile'} onClick={saveProfile}>{busy==='profile'?'ذخیره…':'ذخیره کاربر'}</button>
+  <select value={sub.plan} onChange={e=>setSub({...sub,plan:e.target.value})}>{plans.map(item=><option key={item.id} value={item.id}>{item.name||item.id}</option>)}</select>
+  <select value={sub.status} onChange={e=>setSub({...sub,status:e.target.value})}>{Object.entries(subscriptionStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select>
+  <input style={{width:86}} type="number" min="1" value={sub.days} onChange={e=>setSub({...sub,days:e.target.value})} title="هر تعداد روز"/>
+  <input style={{width:110}} type="number" min="0" placeholder="مبلغ" value={sub.amount} onChange={e=>setSub({...sub,amount:e.target.value})}/>
+  <button className="primary" disabled={busy==='sub'||!sub.plan} onClick={activate}>{busy==='sub'?'ثبت…':'افزودن اشتراک'}</button>
+ </div>
+}
 
-function SubscriptionsPanel({items,patch}){const[q,setQ]=useState('');const filtered=items.filter(item=>`${item.name} ${item.phone} ${item.plan}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><span>{n(filtered.length)} اشتراک</span></PanelTools><Table headers={['کاربر','پلن','مبلغ','وضعیت','شروع','انقضا','مدیریت']} rows={filtered.map(item=>[item.name||item.phone,item.plan,n(item.amount),<span className={'admin-badge '+item.status}>{subscriptionStatus[item.status]||item.status}</span>,date(item.started_at),date(item.expires_at),<select value={item.status} onChange={e=>patch(`/api/admin/subscriptions/${item.id}`,{status:e.target.value})}><option value="active">فعال</option><option value="pending">در انتظار</option><option value="expired">منقضی</option><option value="cancelled">لغوشده</option></select>])}/></>}
+function SubscriptionsPanel({items,patch,api,reload}){
+ const [q,setQ]=useState('')
+ const [plans,setPlans]=useState([])
+ const [note,setNote]=useState('')
+ const [draft,setDraft]=useState({phone:'',name:'',plan:'pro',status:'active',days:'30',amount:'',expires_at:''})
+ useEffect(()=>{if(api)api('/api/admin/plans').then(result=>{const list=result.items||[];setPlans(list);if(list.length&&!list.some(item=>item.id===draft.plan))setDraft(value=>({...value,plan:list.find(item=>item.id!=='free')?.id||list[0].id}))}).catch(()=>setPlans([]))},[])
+ const filtered=items.filter(item=>`${item.name} ${item.phone} ${item.plan} ${item.status}`.includes(q))
+ async function create(event){
+  event.preventDefault();if(!api)return
+  setNote('')
+  try{
+   await api('/api/admin/subscriptions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...draft,days:Number(draft.days)||30,amount:draft.amount===''?undefined:Number(draft.amount),expires_at:draft.expires_at||undefined})})
+   setNote('اشتراک جدید ثبت شد. اگر کاربر وجود نداشت، حسابش هم ساخته شد.')
+   setDraft({phone:'',name:'',plan:draft.plan,status:'active',days:'30',amount:'',expires_at:''})
+   reload&&await reload()
+  }catch{setNote('اشتراک ثبت نشد؛ شماره، پلن، مبلغ یا تاریخ را بررسی کنید.')}
+ }
+ return <>
+  {api&&<section className="admin-panel">
+   <div className="admin-panel-title"><div><h2>افزودن اشتراک توسط مدیر</h2><p>هر تعداد اشتراک که لازم باشد ثبت کنید؛ اگر شماره هنوز کاربر ندارد، حساب کاربری هم ساخته می‌شود.</p></div></div>
+   <form className="admin-settings" onSubmit={create}>
+    <label>موبایل کاربر<input dir="ltr" required placeholder="09123456789" value={draft.phone} onChange={e=>setDraft({...draft,phone:e.target.value})}/></label>
+    <label>نام کاربر تازه<input placeholder="اختیاری" value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})}/></label>
+    <label>پلن<select value={draft.plan} onChange={e=>setDraft({...draft,plan:e.target.value})}>{plans.map(item=><option key={item.id} value={item.id}>{item.name||item.id}</option>)}</select></label>
+    <label>وضعیت<select value={draft.status} onChange={e=>setDraft({...draft,status:e.target.value})}>{Object.entries(subscriptionStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select></label>
+    <label>مدت به روز<input type="number" min="1" placeholder="مثلاً 365" value={draft.days} onChange={e=>setDraft({...draft,days:e.target.value})}/></label>
+    <label>یا تاریخ انقضای دقیق<input type="datetime-local" value={draft.expires_at} onChange={e=>setDraft({...draft,expires_at:e.target.value})}/></label>
+    <label>مبلغ تومان<input type="number" min="0" placeholder="اختیاری" value={draft.amount} onChange={e=>setDraft({...draft,amount:e.target.value})}/></label>
+    <button className="primary"><Plus/> ثبت اشتراک</button>
+   </form>
+  </section>}
+  {note&&<div className="admin-success" style={{margin:'0 0 12px'}}><ShieldCheck/>{note}</div>}
+  <PanelTools query={q} setQuery={setQ}><span>{n(filtered.length)} اشتراک</span><a className="secondary" href="/api/admin/export/subscriptions"><Download/> خروجی CSV</a></PanelTools>
+  <Table headers={['کاربر','پلن','مبلغ','وضعیت','شروع','انقضا','مدیریت کامل']} rows={filtered.map(item=>[item.name||item.phone,item.plan,n(item.amount),<span className={'admin-badge '+item.status}>{subscriptionStatus[item.status]||item.status}</span>,date(item.started_at),date(item.expires_at),<SubscriptionActions key={item.id} item={item} plans={plans} patch={patch}/>])}/>
+ </>
+}
+function SubscriptionActions({item,plans,patch}){
+ const [draft,setDraft]=useState({plan:item.plan,status:item.status,amount:String(item.amount||0),expires_at:localDateTime(item.expires_at),days:''})
+ async function save(){await patch(`/api/admin/subscriptions/${item.id}`,{plan:draft.plan,status:draft.status,amount:Number(draft.amount)||0,expires_at:draft.expires_at||undefined,days:draft.days?Number(draft.days):undefined})}
+ return <div className="table-actions user-admin-actions">
+  <select value={draft.plan} onChange={e=>setDraft({...draft,plan:e.target.value})}>{plans.length?plans.map(plan=><option key={plan.id} value={plan.id}>{plan.name||plan.id}</option>):<option value={draft.plan}>{draft.plan}</option>}</select>
+  <select value={draft.status} onChange={e=>setDraft({...draft,status:e.target.value})}>{Object.entries(subscriptionStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select>
+  <input style={{width:105}} type="number" min="0" value={draft.amount} onChange={e=>setDraft({...draft,amount:e.target.value})}/>
+  <input style={{width:155}} type="datetime-local" value={draft.expires_at} onChange={e=>setDraft({...draft,expires_at:e.target.value})}/>
+  <input style={{width:84}} type="number" min="1" placeholder="روز +" value={draft.days} onChange={e=>setDraft({...draft,days:e.target.value})}/>
+  <button className="primary" onClick={save}><Save/> ذخیره</button>
+ </div>
+}
 function TicketsPanel({items,patch}){const[q,setQ]=useState(''),[filter,setFilter]=useState('all');const filtered=items.filter(item=>(filter==='all'||item.status===filter)&&`${item.name} ${item.phone} ${item.subject} ${item.message}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">همه وضعیت‌ها</option><option value="open">باز</option><option value="pending">در حال بررسی</option><option value="closed">بسته</option></select></PanelTools><Table headers={['کاربر','موضوع','پیام','وضعیت','تاریخ','عملیات']} rows={filtered.map(item=>[item.name||item.phone||'مهمان',item.subject,<span className="ticket-message">{item.message}</span>,<span className={'admin-badge '+item.status}>{ticketStatus[item.status]}</span>,date(item.created_at),<select value={item.status} onChange={e=>patch(`/api/admin/tickets/${item.id}`,{status:e.target.value})}><option value="open">باز</option><option value="pending">در حال بررسی</option><option value="closed">بسته</option></select>])}/></>}
 function ListingsPanel({items,patch}){const[q,setQ]=useState(''),[filter,setFilter]=useState('all');const filtered=items.filter(item=>(filter==='all'||item.status===filter)&&`${item.title} ${item.city} ${item.token}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">همه وضعیت‌ها</option>{Object.entries(listingStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><span>{n(filtered.length)} رکورد</span></PanelTools><Table headers={['عنوان','شهر','قیمت','امتیاز','وضعیت','عدم مشاهده','آخرین مشاهده','عملیات']} rows={filtered.map(item=>[<div className="listing-admin-title"><b>{item.title}</b><small>{item.category}</small></div>,item.city,money(item.price),n(item.score),<span className={`listing-status ${item.status}`}>{listingStatus[item.status]||item.status}</span>,n(item.missing_count),date(item.last_seen_at),<div className="table-actions"><select value={item.status} onChange={e=>patch(`/api/admin/listings/${item.token}`,{status:e.target.value})}>{Object.entries(listingStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><a target="_blank" rel="noreferrer" href={`https://divar.ir/v/${item.token}`}><Eye/> دیوار</a></div>])}/></>}
 
@@ -318,8 +415,86 @@ const configPanels={
 function CatalogPanel({config,value,setValue,save,sync,busy}){const[catalog,setCatalog]=useState(null);useEffect(()=>{fetch('/api/catalog/vehicles').then(r=>r.json()).then(setCatalog).catch(()=>{})},[value.catalog_synced_at]);return <><section className="catalog-health"><div><b>{n(catalog?.cities?.length)}</b><span>شهر دیوار</span></div><div><b>{n(catalog?.categories?.length)}</b><span>دسته حوزه خودرو</span></div><div><b>{n(catalog?.brands?.length)}</b><span>برند فعال</span></div><div><b>{n(catalog?.models?.reduce((sum,item)=>sum+item.models.length,0))}</b><span>مدل خودرو</span></div><button className="primary" onClick={sync} disabled={busy}><RefreshCw className={busy?'spin':''}/> استخراج و همگام‌سازی از دیوار</button></section><ConfigPanel config={config} value={value} setValue={setValue} save={save}/></>}
 function ConfigPanel({config,value,setValue,save}){const Icon=config.icon;return <div className="admin-config-page"><header className="admin-section-hero"><span><Icon/></span><div><h2>{config.title}</h2><p>{config.description}</p></div><button className="primary" onClick={save}><Save/> ذخیره تغییرات</button></header>{config.sections.map(([title,fields])=><section className="admin-panel config-section" key={title}><div className="admin-panel-title"><div><h2>{title}</h2><p>تمام تغییرات این بخش پس از ذخیره اعمال می‌شوند.</p></div></div><div className="config-fields">{fields.map(([key,label,type='text',extra])=><ConfigField key={key} fieldKey={key} label={label} type={type} extra={extra} value={value[key]??''} change={next=>setValue({...value,[key]:next})}/>)}</div></section>)}</div>}
 function ConfigField({fieldKey,label,type,extra,value,change}){if(type==='toggle')return <label className="config-toggle"><span><b>{label}</b><small>{value==='false'?'غیرفعال':'فعال'}</small></span><button type="button" className={value!=='false'?'switch on':'switch'} onClick={()=>change(String(value==='false'))}><i/></button></label>;return <label className={'config-field '+(type==='textarea'?'wide':'')}><span>{label}</span>{type==='textarea'?<textarea rows="6" value={value} onChange={e=>change(e.target.value)} placeholder={extra}/>:type==='select'?<select value={value} onChange={e=>change(e.target.value)}>{extra.map(option=><option value={option} key={option}>{option}</option>)}</select>:<input type={type} value={value} onChange={e=>change(e.target.value)}/>} {extra&&type==='textarea'&&<small>{extra}</small>}</label>}
-function CrawlerPanel({status,settings,setSettings,save,refresh,busy}){return <><header className="admin-section-hero"><span><Bot/></span><div><h2>جمع‌آوری، پردازش و تحلیل بازار</h2><p>منبع داده، دوره بروزرسانی، محدوده خزیدن و قواعد کیفیت را کنترل کنید.</p></div><button className="primary" onClick={refresh} disabled={busy}><RefreshCw className={busy?'spin':''}/> اجرای جمع‌آوری</button></header><section className="admin-panel crawler-control"><div className="crawler-status-cards"><article><Radio/><span><b>{status?.connected?'متصل':'قطع'}</b><small>وضعیت منبع داده</small></span></article><article><Database/><span><b>{n(status?.cachedSearches)}</b><small>جست‌وجوی کش‌شده</small></span></article><article><Activity/><span><b>{status?.refreshing?'در حال اجرا':'آماده'}</b><small>وضعیت Worker</small></span></article></div><div className="config-fields"><ConfigField label="دوره بروزرسانی (دقیقه)" type="number" value={settings.cache_minutes||'10'} change={v=>setSettings({...settings,cache_minutes:v})}/><ConfigField label="حداکثر صفحه هر محدوده" type="number" value={settings.crawler_max_pages||'0'} change={v=>setSettings({...settings,crawler_max_pages:v})}/><ConfigField label="شهرهای خزیدن" type="textarea" extra="کد شهر در هر خط" value={settings.crawler_cities||''} change={v=>setSettings({...settings,crawler_cities:v})}/><ConfigField label="عبارت‌های جست‌وجو" type="textarea" extra="هر عبارت در یک خط" value={settings.crawler_queries||''} change={v=>setSettings({...settings,crawler_queries:v})}/><ConfigField label="حذف آگهی بدون عکس" type="toggle" value={settings.exclude_no_photo||'true'} change={v=>setSettings({...settings,exclude_no_photo:v})}/><ConfigField label="فعال بودن تحلیل قیمت" type="toggle" value={settings.analysis_enabled||'true'} change={v=>setSettings({...settings,analysis_enabled:v})}/></div><button className="primary config-save-bottom" onClick={save}><Save/> ذخیره قواعد جمع‌آوری</button></section></>}
-function FinancePanel({items,patch}){const active=items.filter(item=>item.status==='active'),income=items.reduce((sum,item)=>sum+(item.amount||0),0);return <><div className="report-kpis"><article><WalletCards/><span><small>کل تراکنش ثبت‌شده</small><b>{n(items.length)}</b></span></article><article><TrendingUp/><span><small>درآمد ثبت‌شده</small><b>{n(income)} تومان</b></span></article><article><CreditCard/><span><small>اشتراک فعال</small><b>{n(active.length)}</b></span></article></div><SubscriptionsPanel items={items} patch={patch}/></>}
+function CrawlerPanel({status,settings,setSettings,save,refresh,busy}){
+ const [saving,setSaving]=useState(false)
+ const [message,setMessage]=useState('')
+ async function saveRules(){
+  setSaving(true);setMessage('')
+  try{await save();setMessage('قواعد جمع‌آوری ذخیره شد و در اجرای بعدی crawler اعمال می‌شود.')}
+  catch{setMessage('ذخیره قواعد انجام نشد؛ فضای هاست، نشست مدیریت یا لاگ خطای سرور را بررسی کنید.')}
+  finally{setSaving(false)}
+ }
+ return <><header className="admin-section-hero"><span><Bot/></span><div><h2>جمع‌آوری، پردازش و تحلیل بازار</h2><p>منبع داده، دوره بروزرسانی، محدوده خزیدن و قواعد کیفیت را کنترل کنید.</p></div><button className="primary" onClick={refresh} disabled={busy}><RefreshCw className={busy?'spin':''}/> اجرای جمع‌آوری</button></header><section className="admin-panel crawler-control"><div className="crawler-status-cards"><article><Radio/><span><b>{status?.connected?'متصل':'قطع'}</b><small>وضعیت منبع داده</small></span></article><article><Database/><span><b>{n(status?.cachedSearches)}</b><small>جست‌وجوی کش‌شده</small></span></article><article><Activity/><span><b>{status?.refreshing?'در حال اجرا':'آماده'}</b><small>وضعیت Worker</small></span></article></div><div className="config-fields"><ConfigField label="دوره بروزرسانی (دقیقه)" type="number" value={settings.cache_minutes||'10'} change={v=>setSettings({...settings,cache_minutes:v})}/><ConfigField label="حداکثر صفحه هر محدوده" type="number" value={settings.crawler_max_pages||'0'} change={v=>setSettings({...settings,crawler_max_pages:v})}/><ConfigField label="شهرهای خزیدن" type="textarea" extra="کد شهر در هر خط یا all" value={settings.crawler_cities||''} change={v=>setSettings({...settings,crawler_cities:v})}/><ConfigField label="عبارت‌های جست‌وجو" type="textarea" extra="هر عبارت در یک خط؛ حداکثر ۵ عبارت" value={settings.crawler_queries||''} change={v=>setSettings({...settings,crawler_queries:v})}/><ConfigField label="حذف آگهی بدون عکس" type="toggle" value={settings.exclude_no_photo||'true'} change={v=>setSettings({...settings,exclude_no_photo:v})}/><ConfigField label="فعال بودن تحلیل قیمت" type="toggle" value={settings.analysis_enabled||'true'} change={v=>setSettings({...settings,analysis_enabled:v})}/></div>{message&&<div className="admin-success" style={{margin:'12px 0'}}><ShieldCheck/>{message}</div>}<button className="primary config-save-bottom" disabled={saving} onClick={saveRules}><Save/> {saving?'در حال ذخیره…':'ذخیره قواعد جمع‌آوری'}</button></section></>}
+function PromotionsPanel({settings,setSettings,save,discounts,setDiscounts,api,reload}){
+ return <>
+  <ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={save}/>
+  <DiscountCodesPanel items={discounts} setItems={setDiscounts} api={api} reload={reload}/>
+ </>
+}
+function DiscountCodesPanel({items,setItems,api,reload}){
+ const blank={code:'',title:'',percent:'0',amount:'0',max_uses:'0',starts_at:'',expires_at:'',enabled:true}
+ const [draft,setDraft]=useState(blank)
+ const [note,setNote]=useState('')
+ async function create(event){event.preventDefault();setNote('');try{const result=await api('/api/admin/discounts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(draft)});setItems(result.items);setDraft(blank);setNote('کد تخفیف ساخته شد و در پرداخت قابل استفاده است.')}catch{setNote('کد تخفیف ثبت نشد؛ کد تکراری یا نامعتبر است.')}}
+ async function remove(id){if(!window.confirm('این کد تخفیف حذف شود؟'))return;const result=await api(`/api/admin/discounts/${id}`,{method:'DELETE'});setItems(result.items||[]);reload&&reload()}
+ async function saveRow(item){const result=await api(`/api/admin/discounts/${item.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify(item)});setItems(result.items);setNote('کد تخفیف به‌روزرسانی شد.')}
+ return <section className="admin-panel settings-panel">
+  <div className="admin-panel-title"><div><h2>کدهای تخفیف فروشگاهی</h2><p>چندین کد فعال/غیرفعال با درصد، مبلغ ثابت، سقف استفاده و تاریخ شروع/پایان بسازید.</p></div></div>
+  {note&&<div className="admin-success" style={{margin:'12px 0'}}><ShieldCheck/>{note}</div>}
+  <form className="admin-settings" onSubmit={create}>
+   <label>کد<input dir="ltr" required placeholder="YALDA30" value={draft.code} onChange={e=>setDraft({...draft,code:e.target.value})}/></label>
+   <label>عنوان<input placeholder="کمپین یلدا" value={draft.title} onChange={e=>setDraft({...draft,title:e.target.value})}/></label>
+   <label>درصد تخفیف<input type="number" min="0" max="100" value={draft.percent} onChange={e=>setDraft({...draft,percent:e.target.value})}/></label>
+   <label>مبلغ ثابت تومان<input type="number" min="0" value={draft.amount} onChange={e=>setDraft({...draft,amount:e.target.value})}/></label>
+   <label>سقف استفاده<input type="number" min="0" value={draft.max_uses} onChange={e=>setDraft({...draft,max_uses:e.target.value})}/></label>
+   <label>شروع<input type="datetime-local" value={draft.starts_at} onChange={e=>setDraft({...draft,starts_at:e.target.value})}/></label>
+   <label>پایان<input type="datetime-local" value={draft.expires_at} onChange={e=>setDraft({...draft,expires_at:e.target.value})}/></label>
+   <label className="maintenance"><input type="checkbox" checked={draft.enabled} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/> فعال</label>
+   <button className="primary"><Plus/> ساخت کد تخفیف</button>
+  </form>
+  <Table headers={['کد','عنوان','تخفیف','استفاده','بازه زمانی','وضعیت','مدیریت']} rows={(items||[]).map(item=>[
+   <b dir="ltr">{item.code}</b>,item.title||'—',item.amount?`${n(item.amount)} تومان`:`${n(item.percent)}٪`,`${n(item.used_count)} / ${item.max_uses?n(item.max_uses):'∞'}`,
+   <small>{item.starts_at?date(item.starts_at):'از اکنون'} تا {item.expires_at?date(item.expires_at):'بدون پایان'}</small>,<span className={'admin-badge '+(item.enabled?'active':'inactive')}>{item.enabled?'فعال':'غیرفعال'}</span>,
+   <DiscountActions key={item.id} item={item} save={saveRow} remove={remove}/>
+  ])}/>
+ </section>
+}
+function DiscountActions({item,save,remove}){
+ const [draft,setDraft]=useState({...item,starts_at:localDateTime(item.starts_at),expires_at:localDateTime(item.expires_at)})
+ return <div className="table-actions user-admin-actions">
+  <input style={{width:92}} dir="ltr" value={draft.code} onChange={e=>setDraft({...draft,code:e.target.value})}/>
+  <input style={{width:120}} value={draft.title||''} onChange={e=>setDraft({...draft,title:e.target.value})}/>
+  <input style={{width:70}} type="number" min="0" max="100" value={draft.percent||0} onChange={e=>setDraft({...draft,percent:e.target.value})}/>
+  <input style={{width:95}} type="number" min="0" value={draft.amount||0} onChange={e=>setDraft({...draft,amount:e.target.value})}/>
+  <input style={{width:82}} type="number" min="0" value={draft.max_uses||0} onChange={e=>setDraft({...draft,max_uses:e.target.value})}/>
+  <input style={{width:145}} type="datetime-local" value={draft.starts_at||''} onChange={e=>setDraft({...draft,starts_at:e.target.value})}/>
+  <input style={{width:145}} type="datetime-local" value={draft.expires_at||''} onChange={e=>setDraft({...draft,expires_at:e.target.value})}/>
+  <label className="maintenance"><input type="checkbox" checked={draft.enabled!==false} onChange={e=>setDraft({...draft,enabled:e.target.checked})}/> فعال</label>
+  <button className="primary" onClick={()=>save(draft)}><Save/> ذخیره</button>
+  <button className="danger" onClick={()=>remove(item.id)}><Trash2/> حذف</button>
+ </div>
+}
+function FinancePanel({items,patch}){
+ const [q,setQ]=useState('')
+ const paid=items.filter(item=>item.status==='paid'),pending=items.filter(item=>item.status==='pending')
+ const income=paid.reduce((sum,item)=>sum+(item.amount||0),0),discounts=items.reduce((sum,item)=>sum+(item.discount||0),0)
+ const filtered=items.filter(item=>`${item.name} ${item.phone} ${item.plan} ${item.status} ${item.coupon_code}`.includes(q))
+ return <>
+  <div className="report-kpis"><article><WalletCards/><span><small>کل سفارش‌ها</small><b>{n(items.length)}</b></span></article><article><TrendingUp/><span><small>درآمد پرداخت‌شده</small><b>{n(income)} تومان</b></span></article><article><CreditCard/><span><small>در انتظار پرداخت</small><b>{n(pending.length)}</b></span></article><article><Megaphone/><span><small>تخفیف داده‌شده</small><b>{n(discounts)} تومان</b></span></article></div>
+  <PanelTools query={q} setQuery={setQ}><span>{n(filtered.length)} تراکنش</span></PanelTools>
+  <Table headers={['کاربر','پلن','روش/درگاه','مبلغ','تخفیف','وضعیت','تاریخ','مدیریت']} rows={filtered.map(item=>[
+   item.name||item.phone||'—',item.plan,<div><b>{item.method||'—'}</b><small>{item.gateway_name||'بدون درگاه'}</small></div>,n(item.amount),item.coupon_code?<span>{item.coupon_code} · {n(item.discount)}</span>:n(item.discount),<span className={'admin-badge '+item.status}>{item.status}</span>,date(item.created_at),<OrderActions key={item.id} item={item} patch={patch}/>
+  ])}/>
+ </>
+}
+function OrderActions({item,patch}){
+ const [draft,setDraft]=useState({status:item.status,note:item.note||''})
+ return <div className="table-actions user-admin-actions">
+  <select value={draft.status} onChange={e=>setDraft({...draft,status:e.target.value})}><option value="pending">در انتظار</option><option value="paid">پرداخت‌شده</option><option value="failed">ناموفق</option><option value="refunded">مسترد</option><option value="cancelled">لغوشده</option></select>
+  <input style={{width:160}} placeholder="یادداشت" value={draft.note} onChange={e=>setDraft({...draft,note:e.target.value})}/>
+  <button className="primary" onClick={()=>patch(`/api/admin/orders/${item.id}`,draft)}><Save/> ذخیره</button>
+ </div>
+}
 function ReportsPanel({stats,items}){return <><header className="admin-section-hero"><span><BarChart3/></span><div><h2>مرکز گزارش‌های مدیریتی</h2><p>تصویر سریع از بازار، کاربران، درآمد، پشتیبانی و عملیات سیستم.</p></div></header><div className="report-kpis"><article><Car/><span><small>آگهی فعال</small><b>{n(stats?.activeListings)}</b></span></article><article><Users/><span><small>کاربر ثبت‌شده</small><b>{n(stats?.users)}</b></span></article><article><WalletCards/><span><small>اشتراک فعال</small><b>{n(stats?.subscriptions)}</b></span></article><article><TicketCheck/><span><small>تیکت باز</small><b>{n(stats?.tickets)}</b></span></article></div><section className="admin-panel report-summary"><h2>گزارش سلامت پلتفرم</h2><div><span>آگهی در انتظار بررسی <b>{n(stats?.staleListings)}</b></span><span>آگهی غیرفعال <b>{n(stats?.inactiveListings)}</b></span><span>فرصت طلایی <b>{n(stats?.goldenOpportunities)}</b></span><span>رویداد مدیریتی اخیر <b>{n(items.length)}</b></span></div></section></>}
 
 function PlansPanel({items,setItems,api}){async function save(plan){const result=await api(`/api/admin/plans/${plan.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({...plan,features:Array.isArray(plan.features)?plan.features:String(plan.features).split('\n').filter(Boolean)})});setItems(result.items)}function change(id,key,value){setItems(items.map(item=>item.id===id?{...item,[key]:value}:item))}return <section className="admin-panel settings-panel"><div className="admin-panel-title"><div><h2>پلن‌های اشتراک عمومی</h2><p>نام، قیمت، مزایا، اولویت و وضعیت فروش پلن‌ها را مدیریت کنید.</p></div></div><div className="admin-plans-editor">{items.map(plan=><article key={plan.id}><div className="plan-admin-head"><b>{plan.id}</b><label className="maintenance"><input type="checkbox" checked={plan.enabled} onChange={e=>change(plan.id,'enabled',e.target.checked)}/> فعال</label></div><label>نام پلن<input value={plan.name} onChange={e=>change(plan.id,'name',e.target.value)}/></label><label>قیمت ماهانه (تومان)<input type="number" value={plan.price} onChange={e=>change(plan.id,'price',e.target.value)}/></label><label>توضیح<input value={plan.description||''} onChange={e=>change(plan.id,'description',e.target.value)}/></label><label>مزایا؛ هر مورد در یک خط<textarea rows="6" value={(plan.features||[]).join('\n')} onChange={e=>change(plan.id,'features',e.target.value.split('\n'))}/></label><label className="maintenance"><input type="checkbox" checked={plan.popular} onChange={e=>change(plan.id,'popular',e.target.checked)}/> نشان پیشنهادی</label><button className="primary" onClick={()=>save(plan)}><Save/> ذخیره پلن</button></article>)}</div></section>}

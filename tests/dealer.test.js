@@ -205,3 +205,42 @@ describe('leads attached to a specific car', () => {
     expect(updated).toMatchObject({ status: 'negotiating', inventory_id: car.id })
   })
 })
+
+describe('dealer sales completion and follow-up CRM', () => {
+  const M = 1e6
+  beforeEach(() => {
+    store.db.prepare("INSERT INTO users(phone,name,role,created_at) VALUES('09121110000','نمایشگاه','user',datetime('now'))").run()
+    store.db.prepare("INSERT INTO users(phone,name,role,created_at) VALUES('09121110001','رقیب','user',datetime('now'))").run()
+  })
+
+  it('stores the real sale price and sold date so profit is not just a target', () => {
+    const soldAt = new Date('2026-02-01T10:30:00Z').toISOString()
+    const car = store.saveDealerInventory(1, { title: 'تارا اتوماتیک', buy_price: 900 * M, target_price: 980 * M, sale_price: 970 * M, sold_at: soldAt, status: 'sold' })[0]
+    expect(car).toMatchObject({ status: 'sold', sale_price: 970 * M, sold_at: soldAt })
+    expect(car.sale_price - car.buy_price).toBe(70 * M)
+  })
+
+  it('clears the sold date when a car is moved back to active stock', () => {
+    const car = store.saveDealerInventory(1, { title: 'دنا پلاس', sale_price: 1000 * M, status: 'sold' })[0]
+    const active = store.saveDealerInventory(1, { title: 'دنا پلاس', status: 'available' }, car.id)[0]
+    expect(active.status).toBe('available')
+    expect(active.sold_at).toBeNull()
+  })
+
+  it('tracks lead priority, source and follow-up dates', () => {
+    const next = new Date(Date.now() + 86400000).toISOString()
+    const lead = store.saveDealerLead(1, { name: 'خانم رضایی', phone: '09120002222', priority: 'hot', source: 'اینستاگرام', next_follow_at: next })[0]
+    expect(lead).toMatchObject({ priority: 'hot', source: 'اینستاگرام', next_follow_at: next })
+    const contacted = store.saveDealerLead(1, { name: 'خانم رضایی', status: 'contacted', next_follow_at: next }, lead.id)[0]
+    expect(contacted.status).toBe('contacted')
+    expect(Date.parse(contacted.last_contact_at)).toBeGreaterThan(0)
+  })
+
+  it('preserves CRM fields when a lead is edited partially', () => {
+    const car = store.saveDealerInventory(1, { title: 'پژو ۲۰۷' })[0]
+    const next = new Date(Date.now() + 2 * 86400000).toISOString()
+    const lead = store.saveDealerLead(1, { name: 'آقای کریمی', priority: 'hot', source: 'معرفی', next_follow_at: next, inventory_id: car.id })[0]
+    const edited = store.saveDealerLead(1, { name: 'آقای کریمی', notes: 'بودجه تأیید شد' }, lead.id)[0]
+    expect(edited).toMatchObject({ priority: 'hot', source: 'معرفی', next_follow_at: next, inventory_id: car.id, notes: 'بودجه تأیید شد' })
+  })
+})

@@ -48,7 +48,25 @@ function rateLimit({ windowMs = 60_000, max = 120 } = {}) {
 // Keep the bucket map from growing without bound.
 setInterval(() => { const now = Date.now(); for (const [key, bucket] of rateBuckets) if (now > bucket.resetAt) rateBuckets.delete(key) }, 120_000).unref()
 const PORT = process.env.PORT || 5173
+const isProduction = process.env.NODE_ENV === 'production'
+function envFlag(name, fallback = false) {
+  const value = process.env[name]
+  if (value === undefined || value === '') return fallback
+  if (/^(1|true|yes|on)$/i.test(value)) return true
+  if (/^(0|false|no|off)$/i.test(value)) return false
+  return fallback
+}
+function envNumber(name, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const value = Number(process.env[name])
+  const number = Number.isFinite(value) ? value : fallback
+  return Math.min(max, Math.max(min, number))
+}
 const cacheTtl = Math.max(5, Number(process.env.DIVAR_CACHE_TTL_MINUTES) || 10) * 60 * 1000
+const startupWarmEnabled = envFlag('STARTUP_WARM', true)
+// Keep the first user request fast on shared cPanel hosts: open the port first,
+// then defer the expensive Divar/reference warmup until the app is already serving.
+const startupWarmDelayMs = envNumber('STARTUP_WARM_DELAY_MS', isProduction ? 60_000 : 100, { min: 0, max: 3_600_000 })
+const marketRefreshIntervalMs = envNumber('MARKET_REFRESH_INTERVAL_MINUTES', Math.ceil(cacheTtl / 60_000), { min: 5, max: 1440 }) * 60 * 1000
 const store = createDatabase()
 // detailCache makes colour/mileage enrichment cumulative across crawl cycles;
 // getReference lets the crawl screen bait prices the moment they arrive.
@@ -81,12 +99,32 @@ async function persistCrawl(result, { verifyMissing = true } = {}) {
   }
 }
 
+function splitAdminList(value=''){
+ return String(value||'').split(/[\n,،]+/).map(item=>item.trim()).filter(Boolean)
+}
+function crawlerCities(value, fallback){
+ const text=String(value||'all').trim()
+ if(!text||text.toLowerCase()==='all'||text==='همه')return fallback
+ const ids=splitAdminList(text).map(item=>(item.match(/\d+/)||[''])[0]).filter(Boolean)
+ return ids.length?[...new Set(ids)]:fallback
+}
+function crawlerQueries(value=''){
+ const list=splitAdminList(value).filter(item=>!['all','همه','*'].includes(item.toLowerCase())).slice(0,5)
+ return [...new Set(list)]
+}
+function crawlerMaxPages(value){
+ const pages=Number(value)
+ return Number.isFinite(pages)&&pages>0?Math.min(100,Math.max(1,Math.floor(pages))):undefined
+}
 let marketRefreshRunning=false
 async function refreshConfiguredMarket(){
  if(marketRefreshRunning)return{running:true,total:0,pages:0,scopes:0}
  marketRefreshRunning=true
  try{
-  const cityIds=publicVehicleCatalog(store.settings()).cities.map(city=>city.id)
+  const settings=store.settings()
+  const cityIds=crawlerCities(settings.crawler_cities,publicVehicleCatalog(settings).cities.map(city=>city.id))
+  const queries=crawlerQueries(settings.crawler_queries)
+  const maxPages=crawlerMaxPages(settings.crawler_max_pages)
   const categories=['light','heavy','motorcycles','parts-accessories','vehicles-services'],batchSize=Math.max(1,Number(process.env.DIVAR_CITY_BATCH_SIZE)||40)
   const cityBatches=Array.from({length:Math.ceil(cityIds.length/batchSize)},(_,index)=>cityIds.slice(index*batchSize,(index+1)*batchSize))
   let total=0,pages=0,scopes=0
@@ -94,13 +132,15 @@ async function refreshConfiguredMarket(){
   // support districts"). Retry such batches city by city so one district never
   // poisons the whole batch.
   for(const category of categories)for(const batch of cityBatches){
-    const queue=[[...batch]]
-    while(queue.length){
-      const ids=queue.shift()
-      try{const result=await divar.refresh({category,cityIds:ids});await persistCrawl(result);total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
-      catch(error){
-        if(ids.length>1&&(Number(error.status)===400||String(error.message||'').includes('districts'))){for(const id of ids)queue.push([id]);continue}
-        console.warn(`[divar] skipping ${category} cities:${ids.join(',')} → ${error.code||'ERROR'}: ${error.message}`)
+    for(const queryText of (queries.length?queries:[null])){
+      const queue=[[...batch]]
+      while(queue.length){
+        const ids=queue.shift()
+        try{const result=await divar.refresh({category,cityIds:ids,...(queryText?{queryText}:{}),...(maxPages?{maxPages}:{})});await persistCrawl(result,{verifyMissing:!queryText});total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
+        catch(error){
+          if(ids.length>1&&(Number(error.status)===400||String(error.message||'').includes('districts'))){for(const id of ids)queue.push([id]);continue}
+          console.warn(`[divar] skipping ${category}${queryText?` query:${queryText}`:''} cities:${ids.join(',')} → ${error.code||'ERROR'}: ${error.message}`)
+        }
       }
     }
   }
@@ -238,7 +278,19 @@ app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{
 app.post('/api/contact',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now(),recent=(contactAttempts.get(key)||[]).filter(time=>stamp-time<600000);if(recent.length>=5)return res.status(429).json({error:'RATE_LIMITED'});const name=String(req.body?.name||'').trim().slice(0,80),contact=String(req.body?.contact||'').trim().slice(0,120),subject=String(req.body?.subject||'').trim().slice(0,100),message=String(req.body?.message||'').trim().slice(0,2000);if(name.length<2||contact.length<5||subject.length<2||message.length<10)return res.status(400).json({error:'INVALID_INPUT'});contactAttempts.set(key,[...recent,stamp]);store.createTicket(null,{subject:`${subject} — ${name}`,message:`راه ارتباطی: ${contact}\n\n${message}`});res.status(201).json({ok:true})})
 
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
-app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plan=String(req.body.plan||''),managed=store.plans(true).find(item=>item.id===plan&&item.price>0);if(!managed)return res.status(400).json({error:'INVALID_PLAN'});const gateways=store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority})),requested=Number(req.body.gatewayId),gateway=gateways.find(item=>item.id===requested)||gateways[0]||null;res.json({subscription:store.subscribe(req.user.id,plan,managed.price),mode:gateway||process.env.PAYMENT_GATEWAY?'gateway':'sandbox',gateway,gateways})})
+app.post('/api/subscription/checkout',requireUser,(req,res)=>{
+ const plan=String(req.body.plan||''),managed=store.plans(true).find(item=>item.id===plan&&item.price>0)
+ if(!managed)return res.status(400).json({error:'INVALID_PLAN'})
+ const gateways=store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))
+ const requested=Number(req.body.gatewayId),gateway=gateways.find(item=>item.id===requested)||gateways[0]||null
+ const coupon=store.applyDiscount(req.body.coupon||req.body.discountCode||'',managed.price,{consume:true})
+ if(!coupon.ok)return res.status(400).json({error:coupon.error,discount:coupon})
+ const subscription=store.subscribe(req.user.id,plan,coupon.total)
+ const method=String(req.body.method||'online')
+ const mode=gateway||process.env.PAYMENT_GATEWAY?'gateway':'sandbox'
+ const order=store.recordPaymentOrder({userId:req.user.id,subscriptionId:subscription?.id,plan,method:mode==='gateway'?method:'sandbox',gatewayId:gateway?.id,gatewayName:gateway?.name,couponCode:coupon.code,subtotal:coupon.subtotal,discount:coupon.discount,amount:coupon.total,status:mode==='gateway'?'pending':'paid',note:mode==='gateway'?'در انتظار اتصال/تأیید درگاه':'پرداخت آزمایشی/مدیریتی'})
+ res.json({subscription,mode,gateway,gateways,order,pricing:coupon})
+})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
 // The stored `score` column is only written during a crawl and is never updated
 // when the baseline is recomputed, so counting golden opportunities from it
@@ -502,6 +554,11 @@ app.get('/api/market/sellers', rateLimit({ max: 30 }), (_req, res) => {
 
 app.get('/api/plans',(_req,res)=>res.json({items:store.plans(true)}))
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
+app.get('/api/subscription/discount',(req,res)=>{
+ const plan=store.plans(true).find(item=>item.id===String(req.query.plan||'')&&item.price>0)
+ if(!plan)return res.status(400).json({error:'INVALID_PLAN'})
+ res.json(store.applyDiscount(String(req.query.code||''),plan.price))
+})
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site_name','site_tagline','support_phone','support_email','maintenance_mode','card_golden','card_good','card_fair','card_expensive','card_suspicious','mobile_listing_mode','hero_ticker','hero_title','hero_description','section_slider','section_search','section_opportunities','section_campaign','section_method','section_score','section_faq','feature_comparison','feature_alerts','feature_pricing','score_golden_min','score_good_min','vehicle_categories','vehicle_brands','supported_cities','vehicle_colors','default_city','default_sort','enable_motorcycles','enable_heavy_vehicles','faq_content','faq_enabled','faq_home_count','header_links','footer_platform_links','footer_help_links','footer_description','copyright_text','public_font_scale','show_announcement','enable_motion','campaign_enabled','campaign_title','campaign_description','campaign_discount','campaign_cta','seo_title','seo_description','og_title','og_description','og_image'];res.json(Object.fromEntries(keys.map(key=>[key,s[key]])))})
 /**
  * Dealer dashboard.
@@ -514,7 +571,7 @@ app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site
  */
 app.get('/api/dealer/summary',requireDealer,(req,res)=>{
  const inventory=store.dealerInventory(req.user.id)
- const leads=store.dealerLeads(req.user.id)
+ const rawLeads=store.dealerLeads(req.user.id)
  let priceIndex=null
  try{priceIndex=marketAnalysis('light').priceIndex}catch{}
 
@@ -522,33 +579,30 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
   const valuation=estimateValue({
    title:item.title,brand:item.brand,model:item.model,year:item.year,category:'light',
   },{priceIndex,reference:referenceIndex})
-  if(!valuation.ok)return{...item,market:null,marketNote:valuation.message}
-  const market=valuation.estimate
-  const target=Number(item.target_price)||0
-  const bought=Number(item.buy_price)||0
-  // Positive = asking above the market, which is what keeps a car on the forecourt.
-  const askGap=target&&market?Number((((target-market)/market)*100).toFixed(1)):null
-  const margin=target&&bought?target-bought:null
-  // How long the showroom's money has been parked in this car, and which way the
-  // market has moved since it was taken in. Capital sitting still is the cost a
-  // dealer feels but cannot see.
   const addedAt=Date.parse(item.created_at||'')
   const daysInStock=Number.isFinite(addedAt)?Math.max(0,Math.floor((Date.now()-addedAt)/86400000)):null
+  const bought=Number(item.buy_price)||0
+  const target=Number(item.target_price)||0
+  const salePrice=Number(item.sale_price)||0
+  const sold=item.status==='sold'
+  const actualProfit=sold&&salePrice?salePrice-bought:null
+  if(!valuation.ok)return{...item,market:null,marketNote:valuation.message,daysInStock,stale:daysInStock!==null&&daysInStock>=45,actualProfit}
+  const market=valuation.estimate
+  const askGap=target&&market?Number((((target-market)/market)*100).toFixed(1)):null
+  const margin=target&&bought?target-bought:null
   const baseline=Number(item.market_at_add)||0
   const marketDrift=baseline&&market?Number((((market-baseline)/baseline)*100).toFixed(1)):null
   return{
    ...item,
    daysInStock,
    marketDrift,
-   // Negative drift on an old car is the combination that actually loses money.
    stale:daysInStock!==null&&daysInStock>=45,
    market,
    marketRange:valuation.range,
    marketConfidence:valuation.confidence,
    askGap,
    margin,
-   // A suggestion, not an instruction: the midpoint between the market value and
-   // what they are asking, so the advice is never a cliff.
+   actualProfit,
    suggestedPrice:market&&target&&askGap>8?Math.round((market+target)/2):null,
    verdict:!target||!market?'نامشخص'
     :askGap>15?'خیلی بالاتر از بازار؛ احتمال ماندن در نمایشگاه'
@@ -558,13 +612,28 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
   }
  })
 
- // Attach each buyer to the car they asked about, so "who is waiting on this
- // one?" stops being a memory exercise.
+ const inventoryById=new Map(priced.map(item=>[item.id,item]))
+ const nowMs=Date.now(),dayMs=86400000
+ const leads=rawLeads.map(lead=>{
+  const car=lead.inventory_id?inventoryById.get(lead.inventory_id):null
+  const nextMs=lead.next_follow_at?Date.parse(lead.next_follow_at):NaN
+  const active=!['won','lost'].includes(lead.status)
+  return{
+   ...lead,
+   inventory_title:car?.title||'',
+   inventory_target_price:car?.target_price||0,
+   inventory_status:car?.status||'',
+   linkedPotentialProfit:car?Math.max(0,(Number(car.target_price)||0)-(Number(car.buy_price)||0)):0,
+   followupOverdue:active&&Number.isFinite(nextMs)&&nextMs<nowMs,
+   followupToday:active&&Number.isFinite(nextMs)&&nextMs>=nowMs&&nextMs<=nowMs+dayMs,
+  }
+ })
+
  const leadsByCar=new Map()
  for(const lead of leads){
   if(!lead.inventory_id)continue
   if(!leadsByCar.has(lead.inventory_id))leadsByCar.set(lead.inventory_id,[])
-  leadsByCar.get(lead.inventory_id).push({id:lead.id,name:lead.name,phone:lead.phone,status:lead.status,budget:lead.budget})
+  leadsByCar.get(lead.inventory_id).push({id:lead.id,name:lead.name,phone:lead.phone,status:lead.status,budget:lead.budget,priority:lead.priority,next_follow_at:lead.next_follow_at})
  }
  for(const item of priced){
   item.leads=leadsByCar.get(item.id)||[]
@@ -572,30 +641,40 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
  }
 
  const unsold=priced.filter(item=>item.status!=='sold')
+ const sold=priced.filter(item=>item.status==='sold')
+ const activeLeads=leads.filter(item=>!['won','lost'].includes(item.status))
  const investment=unsold.reduce((sum,item)=>sum+(Number(item.buy_price)||0),0)
  const expected=unsold.reduce((sum,item)=>sum+(Number(item.target_price)||0),0)
  const marketValue=unsold.reduce((sum,item)=>sum+(item.market||Number(item.target_price)||0),0)
  const overpriced=unsold.filter(item=>item.askGap!==null&&item.askGap>8)
+ const won=leads.filter(item=>item.status==='won').length
 
  res.json({
   inventory:priced,
   leads,
+  followups:activeLeads.filter(lead=>lead.next_follow_at).sort((a,b)=>Date.parse(a.next_follow_at)-Date.parse(b.next_follow_at)).slice(0,50),
   metrics:{
    inventoryCount:inventory.length,
    available:inventory.filter(item=>item.status==='available').length,
-   activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,
+   reserved:inventory.filter(item=>item.status==='reserved').length,
+   soldCount:sold.length,
+   activeLeads:activeLeads.length,
+   hotLeads:activeLeads.filter(item=>item.priority==='hot').length,
+   followupsDue:activeLeads.filter(item=>item.followupOverdue||item.followupToday).length,
+   overdueFollowups:activeLeads.filter(item=>item.followupOverdue).length,
+   leadPipelineValue:activeLeads.reduce((sum,item)=>sum+(Number(item.budget)||Number(item.inventory_target_price)||0),0),
+   conversionRate:leads.length?Math.round((won/leads.length)*100):0,
    investment,
    expectedProfit:expected-investment,
-   // What the market says the unsold stock is worth right now, versus the asking
-   // total — the single number a showroom owner actually wants each morning.
+   realizedRevenue:sold.reduce((sum,item)=>sum+(Number(item.sale_price)||0),0),
+   realizedProfit:sold.reduce((sum,item)=>sum+(Number(item.actualProfit)||0),0),
    marketValue,
    marketVsAsking:expected?Number((((marketValue-expected)/expected)*100).toFixed(1)):null,
    overpricedCount:overpriced.length,
    staleCount:unsold.filter(item=>item.stale).length,
-   // Money tied up in cars that have been sitting for 45 days or more.
    stalledCapital:unsold.filter(item=>item.stale).reduce((sum,item)=>sum+(Number(item.buy_price)||0),0),
    averageDaysInStock:unsold.length?Math.round(unsold.reduce((sum,item)=>sum+(item.daysInStock||0),0)/unsold.length):0,
-   unlinkedLeads:leads.filter(lead=>!lead.inventory_id&&!['won','lost'].includes(lead.status)).length,
+   unlinkedLeads:activeLeads.filter(lead=>!lead.inventory_id).length,
   },
   market:store.publicStats(),
  })
@@ -618,7 +697,16 @@ app.delete('/api/dealer/inventory/:id',requireDealer,(req,res)=>{store.deleteDea
 app.post('/api/dealer/leads',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerLead(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
 app.patch('/api/dealer/leads/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerLead(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
 app.delete('/api/dealer/leads/:id',requireDealer,(req,res)=>{store.deleteDealerLead(req.user.id,Number(req.params.id));res.json({ok:true})})
-app.get('/api/dealer/export.csv',requireDealer,(req,res)=>{const esc=value=>`"${String(value??'').replaceAll('"','""')}"`,rows=[['نوع','عنوان/نام','خودرو','سال','قیمت خرید/بودجه','قیمت هدف','وضعیت','تلفن'],...store.dealerInventory(req.user.id).map(item=>['موجودی',item.title,`${item.brand} ${item.model}`,item.year,item.buy_price,item.target_price,item.status,'']),...store.dealerLeads(req.user.id).map(item=>['مشتری',item.name,item.vehicle,'',item.budget,'',item.status,item.phone])];res.set({'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="khodroto-dealer.csv"'});res.send('\ufeff'+rows.map(row=>row.map(esc).join(',')).join('\n'))})
+app.get('/api/dealer/export.csv',requireDealer,(req,res)=>{
+ const esc=value=>`"${String(value??'').replaceAll('"','""')}"`
+ const rows=[
+  ['نوع','عنوان/نام','خودرو','سال','قیمت خرید/بودجه','قیمت هدف','قیمت فروش','سود واقعی','وضعیت','تلفن','اولویت','منبع','پیگیری بعدی','یادداشت'],
+  ...store.dealerInventory(req.user.id).map(item=>['موجودی',item.title,`${item.brand} ${item.model}`,item.year,item.buy_price,item.target_price,item.sale_price||'',item.sale_price?Number(item.sale_price)-Number(item.buy_price||0):'',item.status,'','','','',item.notes||'']),
+  ...store.dealerLeads(req.user.id).map(item=>['مشتری',item.name,item.vehicle,'',item.budget,'','', '',item.status,item.phone,item.priority||'',item.source||'',item.next_follow_at||'',item.notes||'']),
+ ]
+ res.set({'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="khodroto-dealer.csv"'})
+ res.send('\ufeff'+rows.map(row=>row.map(esc).join(',')).join('\n'))
+})
 
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
 app.get('/api/admin/users',adminOnly,(req,res)=>{
@@ -629,6 +717,14 @@ app.get('/api/admin/users',adminOnly,(req,res)=>{
   offset:Math.max(0,Number(req.query.offset)||0),
  })
  res.json(result)
+})
+app.post('/api/admin/users',adminOnly,(req,res)=>{
+ const existing=store.userByPhone(req.body?.phone)
+ if(existing)return res.status(409).json({error:'USER_EXISTS',user:existing})
+ const user=store.createAdminUser(req.body||{})
+ if(!user)return res.status(400).json({error:'INVALID_USER'})
+ store.audit(req.user.id,'create','user',String(user.id),{phone:user.phone,role:user.role})
+ res.status(201).json({ok:true,user})
 })
 
 // --- CSV export -------------------------------------------------------------
@@ -691,15 +787,44 @@ app.delete('/api/admin/reference/manual',adminOnly,(req,res)=>{
  store.audit(req.user.id,'delete','reference_manual',String(req.query.cohortKey||''))
  res.json({ok:true,items:store.manualReferences()})
 })
-app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);store.audit(req.user.id,'update_role','user',req.params.id,{role});res.json({ok:true})})
+app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{
+ const user=store.updateAdminUser(Number(req.params.id),req.body||{})
+ if(!user)return res.status(404).json({error:'NOT_FOUND'})
+ store.audit(req.user.id,'update','user',req.params.id,{role:user.role,name:user.name,city:user.city})
+ res.json({ok:true,user})
+})
+app.post('/api/admin/users/:id/subscription',adminOnly,(req,res)=>{
+ const days=Number(req.body.days)||30
+ const row=store.grantSubscription(Number(req.params.id),{plan:String(req.body.plan||'free'),status:String(req.body.status||'active'),days,amount:req.body.amount,expires_at:req.body.expires_at})
+ if(!row)return res.status(400).json({error:'INVALID_SUBSCRIPTION'})
+ store.audit(req.user.id,'grant','subscription',String(row.id),{userId:req.params.id,plan:row.plan,status:row.status,days})
+ res.status(201).json({ok:true,subscription:row})
+})
 app.get('/api/admin/subscriptions',adminOnly,(_req,res)=>res.json({items:store.adminSubscriptions()}))
-app.patch('/api/admin/subscriptions/:id',adminOnly,(req,res)=>{const status=['active','expired','cancelled','pending'].includes(req.body.status)?req.body.status:'pending';store.setSubscriptionStatus(Number(req.params.id),status);store.audit(req.user.id,'update_status','subscription',req.params.id,{status});res.json({ok:true})})
+app.post('/api/admin/subscriptions',adminOnly,(req,res)=>{
+ const row=store.createAdminSubscription(req.body||{})
+ if(!row)return res.status(400).json({error:'INVALID_SUBSCRIPTION'})
+ store.audit(req.user.id,'create','subscription',String(row.id),{userId:row.user_id,plan:row.plan,status:row.status})
+ res.status(201).json({ok:true,subscription:row})
+})
+app.patch('/api/admin/subscriptions/:id',adminOnly,(req,res)=>{
+ const row=store.updateSubscription(Number(req.params.id),req.body||{})
+ if(!row)return res.status(400).json({error:'INVALID_SUBSCRIPTION'})
+ store.audit(req.user.id,'update','subscription',req.params.id,{plan:row.plan,status:row.status,expires_at:row.expires_at})
+ res.json({ok:true,subscription:row})
+})
 app.get('/api/admin/tickets',adminOnly,(_req,res)=>res.json({items:store.adminTickets()}))
 app.patch('/api/admin/tickets/:id',adminOnly,(req,res)=>{const status=['open','pending','closed'].includes(req.body.status)?req.body.status:'open';store.setTicketStatus(Number(req.params.id),status);store.audit(req.user.id,'update_status','ticket',req.params.id,{status});res.json({ok:true})})
 app.get('/api/admin/listings',adminOnly,(_req,res)=>res.json({items:store.adminListings()}))
 app.patch('/api/admin/listings/:token',adminOnly,(req,res)=>{const status=['active','stale','inactive','removed'].includes(req.body.status)?req.body.status:null;if(!status)return res.status(400).json({error:'INVALID_STATUS'});store.setListingStatus(String(req.params.token),status);store.audit(req.user.id,'update_status','listing',req.params.token,{status});res.json({ok:true})})
 app.get('/api/admin/plans',adminOnly,(_req,res)=>res.json({items:store.plans()}))
 app.patch('/api/admin/plans/:id',adminOnly,(req,res)=>{const items=store.savePlan(String(req.params.id),req.body||{});if(!items)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update','plan',req.params.id);res.json({items})})
+app.get('/api/admin/discounts',adminOnly,(_req,res)=>res.json({items:store.discountCodes()}))
+app.post('/api/admin/discounts',adminOnly,(req,res)=>{try{const items=store.saveDiscountCode(req.body||{});store.audit(req.user.id,'create','discount',req.body?.code);res.status(201).json({items})}catch(error){res.status(400).json({error:error.message||'INVALID_DISCOUNT'})}})
+app.patch('/api/admin/discounts/:id',adminOnly,(req,res)=>{try{const items=store.saveDiscountCode(req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update','discount',req.params.id);res.json({items})}catch(error){res.status(400).json({error:error.message||'INVALID_DISCOUNT'})}})
+app.delete('/api/admin/discounts/:id',adminOnly,(req,res)=>{const removed=store.deleteDiscountCode(Number(req.params.id));if(!removed)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'delete','discount',req.params.id);res.json({ok:true,items:store.discountCodes()})})
+app.get('/api/admin/orders',adminOnly,(req,res)=>res.json({items:store.adminOrders(Number(req.query.limit)||200)}))
+app.patch('/api/admin/orders/:id',adminOnly,(req,res)=>{const order=store.updateOrder(Number(req.params.id),req.body||{});if(!order)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update','order',req.params.id,{status:order.status});res.json({ok:true,order})})
 app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
 app.patch('/api/admin/settings',adminOnly,(req,res)=>{
  const settings=store.updateSettings(req.body||{})
@@ -1030,11 +1155,20 @@ const warmReference=()=>refreshReferencePrices()
 // app.listen() meant the process spent its first minutes rebuilding baselines and
 // sweeping Divar while the port was not even open yet — the visitor who arrived in
 // that window simply waited. The server now listens first and warms afterwards.
+let backgroundWorkStarted=false
 function startBackgroundWork(){
+ if(backgroundWorkStarted)return
+ backgroundWorkStarted=true
  try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
  if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
  warmMarketCache()
- setInterval(warmMarketCache, cacheTtl).unref()
+ setInterval(warmMarketCache, marketRefreshIntervalMs).unref()
+}
+function scheduleBackgroundWork(){
+ if(!startupWarmEnabled){console.log('[startup] background warm disabled (STARTUP_WARM=false)');return}
+ const seconds=Math.round(startupWarmDelayMs/1000)
+ console.log(`[startup] background warm scheduled in ${seconds}s`)
+ setTimeout(startBackgroundWork,startupWarmDelayMs).unref?.()
 }
 
 // Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
@@ -1063,11 +1197,28 @@ app.use((error, req, res, _next) => {
   res.status(status).json(body)
 })
 
-app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
-app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
+const immutableAssetCache = 'public, max-age=31536000, immutable'
+const shortStaticCache = 'public, max-age=86400'
+const htmlCache = 'no-cache'
+app.use('/assets', express.static(path.join(dist, 'assets'), {
+  maxAge: '1y',
+  immutable: true,
+  index: false,
+  redirect: false,
+  setHeaders: res => res.setHeader('Cache-Control', immutableAssetCache),
+}))
+app.use(express.static(dist, {
+  maxAge: '1d',
+  index: false,
+  redirect: false,
+  setHeaders: (res, filePath) => res.setHeader('Cache-Control', filePath.endsWith('index.html') ? htmlCache : shortStaticCache),
+}))
+app.use((req, res, next) => {
+  if (!['GET','HEAD'].includes(req.method) || !req.accepts('html')) return next()
+  res.set('Cache-Control', htmlCache)
+  return res.sendFile(path.join(dist, 'index.html'))
+})
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`)
-  // One tick after the port is open, so the first request is never queued behind
-  // the baseline rebuild. STARTUP_WARM=false disables it for tests and CI.
-  if(process.env.STARTUP_WARM!=='false')setTimeout(startBackgroundWork,100).unref?.()
+  scheduleBackgroundWork()
 })

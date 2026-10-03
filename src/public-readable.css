@@ -116,3 +116,4 @@ body{font-size:var(--user-text-md);line-height:1.75;-webkit-font-smoothing:antia
   .standalone-faq button b{font-size:16px;max-width:90%}
   .dash-welcome h1{font-size:23px}
 }
+.coupon-box input,.coupon-box button{font-size:var(--user-text-sm)}
