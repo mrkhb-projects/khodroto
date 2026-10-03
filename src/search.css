@@ -11,3 +11,66 @@
 .opp-gate a{white-space:nowrap}
 .opp-more-link{display:inline-flex;align-items:center;gap:6px;margin-inline-start:18px;font-size:12px}
 @media(max-width:700px){.opp-gate{flex-direction:column;align-items:stretch;text-align:center}.opp-gate>svg{margin:0 auto}.opp-gate a{align-self:center}.opp-more-link{display:flex;justify-content:center;margin:12px 0 0}}
+
+/* --- Province-first city picker ------------------------------------------- */
+.city-picker{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:center;width:100%}
+.city-picker .select-box{min-width:0}
+.city-picker .select-box select{width:100%;min-width:0}
+.city-picker .geo-button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid var(--line,#e3e6ef);background:#fff;color:var(--ink,#1d2433);border-radius:12px;padding:0 12px;height:44px;font:inherit;font-size:.85rem;cursor:pointer;transition:background .15s,border-color .15s}
+.city-picker .geo-button:hover:not(:disabled){background:#f4f6fb;border-color:#c9d0e3}
+.city-picker .geo-button:disabled{opacity:.6;cursor:progress}
+.city-picker .geo-button svg{width:16px;height:16px}
+.city-picker.compact{grid-template-columns:1fr 1fr auto;gap:6px}
+.city-picker.compact .geo-button{padding:0 10px;font-size:.8rem}
+.filter-group .city-picker{grid-template-columns:1fr 1fr;gap:8px}
+.filter-group .city-picker .geo-button{grid-column:1/-1}
+@media (max-width:720px){
+  .city-picker{grid-template-columns:1fr 1fr}
+  .city-picker .geo-button{grid-column:1/-1}
+}
+
+/* --- Price-trust badges on listing cards ---------------------------------- */
+.result-risk.danger{background:#fdeaea;border:1px solid #f3b7b7;color:#9b1c1c;display:flex;flex-direction:column;gap:2px}
+.result-risk.danger small{font-weight:600;opacity:.85}
+.result-risk.caution{background:#fff7e6;border:1px solid #f5d79a;color:#8a5a00}
+
+/* --- «چرا این امتیاز؟» و قیمت مرجع ---------------------------------------- */
+.result-reference{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:6px 10px;margin-top:6px;border-radius:10px;background:#f1f6ff;border:1px solid #d8e4fa}
+.result-reference small{color:#44608f;font-size:.74rem}
+.result-reference b{color:#17324f;font-size:.86rem}
+.result-alsoon{margin-top:6px;font-size:.74rem;color:#5a6272;background:#f6f7fa;border-radius:8px;padding:5px 9px}
+.why-score{margin-top:8px}
+.why-score>button{display:flex;align-items:center;gap:5px;width:100%;justify-content:center;background:transparent;border:1px dashed #cfd6e4;color:#44608f;border-radius:10px;padding:7px 10px;font:inherit;font-size:.78rem;cursor:pointer}
+.why-score>button:hover{background:#f6f8fc;border-color:#aebbd4}
+.why-score>button svg{width:14px;height:14px;transition:transform .18s}
+.why-score>button svg.open{transform:rotate(180deg)}
+.why-score-body{margin-top:8px;padding:10px;border-radius:10px;background:#fafbfd;border:1px solid #e6eaf2;font-size:.78rem}
+.why-score-body p{margin:0 0 8px;color:#3b4454;line-height:1.7}
+.why-score-body dl{display:grid;gap:4px;margin:0}
+.why-score-body dl>div{display:flex;justify-content:space-between;gap:10px;border-bottom:1px dotted #e3e7f0;padding-bottom:3px}
+.why-score-body dt{color:#6b7385}
+.why-score-body dd{margin:0;color:#17324f;font-weight:600}
+.why-warnings{margin:8px 0 0;padding:0 16px 0 0;color:#9b1c1c}
+.why-warnings li{margin-bottom:3px}
+.why-score-body>a{display:inline-block;margin-top:8px;color:#44608f;font-size:.76rem}
+
+/* --- نمودار روند قیمت ------------------------------------------------------ */
+.sparkline{display:flex;align-items:center;gap:8px;margin:6px 0}
+.sparkline svg{flex:1;min-width:0;height:44px;display:block}
+.sparkline>span{font-size:.74rem;font-weight:700;color:#5a6272;white-space:nowrap}
+.sparkline>span.down{color:#2f7a4f}
+.sparkline>span.up{color:#b3321f}
+.price-history{margin-top:10px;padding-top:8px;border-top:1px dotted #e3e7f0}
+.price-history small{display:block;font-size:.72rem;color:#6b7385}
+.market-trend{min-width:160px;margin-inline-start:auto}
+.market-trend small{display:block;font-size:.72rem;color:#44608f;margin-bottom:2px}
+.market-trend .sparkline svg{height:36px}
+
+/* --- صفحات SEO مدل (قابل خزش، زیر اپ رندر می‌شوند) ------------------------- */
+noscript-content{display:block;max-width:980px;margin:0 auto;padding:24px 16px 48px;font-family:inherit;color:#1d2433;line-height:1.9}
+noscript-content h1{font-size:1.6rem;margin:0 0 12px}
+noscript-content h2{font-size:1.15rem;margin:26px 0 10px}
+noscript-content table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.9rem}
+noscript-content caption{text-align:start;color:#6b7385;font-size:.82rem;padding-bottom:6px}
+noscript-content th,noscript-content td{border:1px solid #e6eaf2;padding:8px 10px;text-align:start}
+noscript-content thead th{background:#f6f8fc}

@@ -5,6 +5,148 @@ import { isCompared, toggleCompared } from './comparison'
 
 const num=n=>new Intl.NumberFormat('fa-IR').format(n||0)
 const toman=n=>num(Math.round((n||0)/1e6))
+// Province-first city picker.
+// The old control rendered one flat <select> straight from the scraped Divar list,
+// which showed «کل ایران» ten-plus times and mixed Tehran districts between cities.
+// Now: استان → شهر, grouped and deduplicated, plus an optional "use my location"
+// shortcut that snaps the browser position onto the nearest supported city.
+function CityPicker({groups=[],value='',onChange,compact=false}){
+ const [province,setProvince]=useState('')
+ const [geoState,setGeoState]=useState('idle')
+ useEffect(()=>{
+  if(!value||!groups.length){return}
+  const owner=groups.find(group=>group.cities.some(city=>String(city.id)===String(value)))
+  if(owner)setProvince(owner.provinceId)
+ },[value,groups])
+ const cities=province?(groups.find(group=>group.provinceId===province)?.cities||[]):[]
+ function useMyLocation(){
+  if(!navigator.geolocation){setGeoState('unsupported');return}
+  setGeoState('loading')
+  navigator.geolocation.getCurrentPosition(async position=>{
+   try{
+    const {latitude,longitude}=position.coords
+    const response=await fetch(`/api/locations/resolve?lat=${latitude}&lng=${longitude}`)
+    if(!response.ok)throw new Error('out of coverage')
+    const data=await response.json()
+    setProvince(data.city.provinceId)
+    onChange(String(data.city.id))
+    setGeoState('done')
+   }catch{setGeoState('failed')}
+  },()=>setGeoState('denied'),{timeout:8000,maximumAge:600000})
+ }
+ return <div className={'city-picker'+(compact?' compact':'')}>
+  <div className="select-box">
+   <select aria-label="استان" value={province} onChange={event=>{setProvince(event.target.value);onChange('')}}>
+    <option value="">همهٔ استان‌ها</option>
+    {groups.map(group=><option key={group.provinceId} value={group.provinceId}>{group.province}</option>)}
+   </select><ChevronDown/>
+  </div>
+  <div className="select-box">
+   <select aria-label="شهر" value={value} onChange={event=>onChange(event.target.value)} disabled={!province}>
+    <option value="">{province?'همهٔ شهرهای استان':'کل ایران'}</option>
+    {cities.map(city=><option key={city.id} value={city.id}>{city.name}</option>)}
+   </select><ChevronDown/>
+  </div>
+  <button type="button" className="geo-button" onClick={useMyLocation} disabled={geoState==='loading'}>
+   <MapPin/> {geoState==='loading'?'در حال یافتن…':geoState==='denied'?'دسترسی رد شد':geoState==='failed'?'خارج از پوشش':'شهر من'}
+  </button>
+ </div>
+}
+
+// 90-day trend of a whole model's market value, from the daily baseline snapshots.
+function MarketTrend({intel,category='light'}){
+ const [points,setPoints]=useState(null)
+ const cohort=intel?.cohortKey
+ useEffect(()=>{
+  if(!cohort){setPoints([]);return}
+  let alive=true
+  fetch(`/api/market/trend?category=${encodeURIComponent(category)}&cohort=${encodeURIComponent(cohort)}&days=90`)
+   .then(response=>response.ok?response.json():{points:[]})
+   .then(data=>{if(alive)setPoints((data.points||[]).map(row=>({value:row.median,at:row.captured_on})))})
+   .catch(()=>{if(alive)setPoints([])})
+  return()=>{alive=false}
+ },[cohort,category])
+ if(!points||points.length<2)return null
+ return <div className="market-trend"><small>روند ۹۰ روزهٔ بازار</small><Sparkline points={points} height={44}/></div>
+}
+
+// Price trend sparkline. Pure SVG on purpose: a charting library would add a
+// large dependency for one small graph on a market-data site that must stay fast.
+function Sparkline({points=[],height=48,stroke='#2f7a4f'}){
+ const values=points.map(p=>Number(p.value)||0).filter(v=>v>0)
+ if(values.length<2)return null
+ const min=Math.min(...values),max=Math.max(...values),span=(max-min)||1
+ const width=100
+ const coords=values.map((value,index)=>{
+  const x=(index/(values.length-1))*width
+  const y=height-((value-min)/span)*(height-8)-4
+  return [Number(x.toFixed(2)),Number(y.toFixed(2))]
+ })
+ const line=coords.map(([x,y],index)=>`${index?'L':'M'}${x} ${y}`).join(' ')
+ const area=`${line} L${width} ${height} L0 ${height} Z`
+ const first=values[0],last=values[values.length-1]
+ const change=first?((last-first)/first)*100:0
+ return <div className="sparkline">
+  <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label="روند قیمت">
+   <path d={area} fill={stroke} fillOpacity="0.1"/>
+   <path d={line} fill="none" stroke={stroke} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>
+   <circle cx={coords[coords.length-1][0]} cy={coords[coords.length-1][1]} r="2" fill={stroke} vectorEffect="non-scaling-stroke"/>
+  </svg>
+  <span className={change<0?'down':change>0?'up':''}>
+   {change===0?'بدون تغییر':`${num(Math.abs(Math.round(change*10)/10))}٪ ${change<0?'کاهش':'افزایش'}`}
+  </span>
+ </div>
+}
+
+// A listing whose seller keeps cutting the price is a genuinely motivated seller —
+// one of the strongest buy signals we can surface, and the price_history table was
+// already being filled without anyone ever reading it.
+function PriceHistory({token}){
+ const [points,setPoints]=useState(null)
+ useEffect(()=>{
+  let alive=true
+  fetch(`/api/listings/${encodeURIComponent(token)}/history`)
+   .then(response=>response.ok?response.json():{items:[]})
+   .then(data=>{if(alive)setPoints((data.items||[]).map(row=>({value:row.price,at:row.recorded_at})))})
+   .catch(()=>{if(alive)setPoints([])})
+  return()=>{alive=false}
+ },[token])
+ if(!points||points.length<2)return null
+ const first=points[0].value,last=points[points.length-1].value
+ return <div className="price-history">
+  <small>روند قیمت این آگهی · {num(points.length)} تغییر</small>
+  <Sparkline points={points} height={40} stroke={last<first?'#2f7a4f':'#b3321f'}/>
+  <small>از {toman(first)} به {toman(last)} میلیون</small>
+ </div>
+}
+
+// «چرا این امتیاز؟» — the engine already produces reason, confidence, cohort level
+// and sample size; previously the card showed only a bare number. Users trust a
+// score they can audit, and this is the main thing competitors do not offer.
+function WhyScore({car}){
+ const [open,setOpen]=useState(false)
+ if(car.score==null&&!car.reason)return null
+ const rows=[
+  ['مبنای مقایسه',car.marketLevelLabel||'—'],
+  ['تعداد نمونهٔ هم‌جنس',car.marketSamples>0?`${num(car.marketSamples)} آگهی`:'—'],
+  ['میانهٔ بازار',car.market>0?`${toman(car.market)} میلیون تومان`:'—'],
+  ['محدودهٔ متعارف',car.marketP25>0&&car.marketP75>0?`${toman(car.marketP25)} تا ${toman(car.marketP75)} میلیون`:'—'],
+  ['فاصله از بازار',car.market>0?`${num(Math.abs(Math.round(car.discount)))}٪ ${car.discount>=0?'زیر':'بالای'} بازار`:'—'],
+  ['اطمینان تحلیل',car.confidence>0?`${num(car.confidence)}٪`:'—'],
+  ['قیمت مرجع',car.referencePrice>0?`${toman(car.referencePrice)} میلیون تومان`:'ثبت نشده'],
+ ]
+ return <div className="why-score">
+  <button type="button" onClick={()=>setOpen(!open)} aria-expanded={open}>چرا این امتیاز؟ <ChevronDown className={open?'open':''}/></button>
+  {open&&<div className="why-score-body">
+   {car.reason&&<p>{car.reason}</p>}
+   <dl>{rows.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+   {car.priceWarnings?.length>0&&<ul className="why-warnings">{car.priceWarnings.map(warning=><li key={warning}>{warning}</li>)}</ul>}
+   <PriceHistory token={car.token||car.id}/>
+   <a href="/methodology">روش کامل محاسبه</a>
+  </div>}
+ </div>
+}
+
 const cardStyleFor=(car,settings={})=>car.suspicious?settings.card_suspicious||'6':car.score>=Number(settings.score_golden_min||85)?settings.card_golden||'1':car.score>=Number(settings.score_good_min||70)?settings.card_good||'2':car.score>=50?settings.card_fair||'4':settings.card_expensive||'5'
 const scoreStyle=score=>({'--score-color':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},65%,40%)`,'--score-soft':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},70%,94%)`})
 const cities=[['1','تهران'],['3','مشهد'],['4','اصفهان'],['2','کرج'],['6','شیراز'],['7','اهواز'],['10','قم'],['8','تبریز'],['5','رشت']]
@@ -13,7 +155,7 @@ const parsePairs=(value,fallback)=>{const rows=parseLines(value).map(line=>line.
 const brands=['همه برندها','ایران خودرو','سایپا','پژو','سمند','دنا','تارا','کوییک','شاهین','مدیران خودرو','کرمان موتور','هیوندای','کیا','تویوتا']
 
 function ListingCard({car,onSave,settings}){const [compared,setCompared]=useState(()=>isCompared(car.id));const key=`khodroto:saved:${car.id}`, [saved,setSaved]=useState(()=>localStorage.getItem(key)!==null);function toggle(){const next=!saved;setSaved(next);next?localStorage.setItem(key,JSON.stringify(car)):localStorage.removeItem(key);onSave?.(next?'به ذخیره‌ها اضافه شد':'از ذخیره‌ها حذف شد')}
-return <article className={`result-card card-style-${cardStyleFor(car,settings)}`}><div className="result-image"><img src={car.image||'/khodroto-hero.jpg'} alt={car.title}/><button className={saved?'saved':''} onClick={toggle}><Heart fill={saved?'currentColor':'none'}/></button><span>{car.freshness||'تازه'}</span></div><div className="result-content"><div className="result-title"><div><small><MapPin/> {car.city}</small><h3>{car.title}</h3></div><div style={scoreStyle(car.score)} className={'mini-score '+(car.suspicious?'suspicious':'')}>{car.suspicious?'!':num(car.score)}</div></div><div className="result-specs"><span>{car.year?`مدل ${num(car.year)}`:'سال نامشخص'}</span><span>{car.km?`${num(car.km)} کیلومتر`:'کارکرد نامشخص'}</span><span>{car.color||'—'}</span></div>{car.suspicious&&<div className="result-risk">مشکوک: {car.riskFlags?.[0]||'قیمت خارج از محدوده بازار'}</div>}<div className="result-price"><div><small>قیمت آگهی</small><b>{car.price?`${toman(car.price)} میلیون تومان`:(car.priceText||'توافقی')}</b></div>{car.market>0?<span>{num(Math.max(0,car.discount))}٪ زیر بازار</span>:<span className="no-market">داده بازار کافی نیست</span>}</div><div className="result-market"><small>میانگین بازار {car.marketLevelLabel?`(${car.marketLevelLabel})`:''}</small><b>{car.market>0?`${toman(car.market)} میلیون`:'—'}</b><small>{car.marketSamples>0?`${num(car.marketSamples)} نمونه`:''}</small></div>{settings?.feature_comparison!=='false'&&<button className={`compare-card-button ${compared?'active':''}`} onClick={()=>{const result=toggleCompared(car);setCompared(isCompared(car.id));onSave?.(result.full?'حداکثر چهار خودرو قابل مقایسه است.':result.added?'به مقایسه اضافه شد.':'از مقایسه حذف شد.')}}><GitCompareArrows/>{compared?'انتخاب‌شده برای مقایسه':'افزودن به مقایسه'}</button>}<a href={car.link} target="_blank" rel="noreferrer">مشاهده در دیوار <ArrowUpLeft/></a></div></article>}
+return <article className={`result-card card-style-${cardStyleFor(car,settings)}`}><div className="result-image"><img src={car.image||'/khodroto-hero.jpg'} alt={car.title}/><button className={saved?'saved':''} onClick={toggle}><Heart fill={saved?'currentColor':'none'}/></button><span>{car.freshness||'تازه'}</span></div><div className="result-content"><div className="result-title"><div><small><MapPin/> {car.city}</small><h3>{car.title}</h3></div><div style={scoreStyle(car.score)} className={'mini-score '+(car.suspicious?'suspicious':'')}>{car.suspicious?'!':car.score==null?'—':num(car.score)}</div></div><div className="result-specs"><span>{car.year?`مدل ${num(car.year)}`:'سال نامشخص'}</span><span>{car.km?`${num(car.km)} کیلومتر`:'کارکرد نامشخص'}</span><span>{car.color||'—'}</span></div>{car.trust==='reject'?<div className="result-risk danger">قیمت غیرواقعی: {car.priceWarnings?.[0]||'این مبلغ قیمت کامل خودرو نیست'}{car.referencePrice>0&&<small>قیمت مرجع بازار: {toman(car.referencePrice)} میلیون تومان</small>}</div>:car.trust==='review'?<div className="result-risk caution">نیازمند بررسی: {car.priceWarnings?.[0]||'قیمت با بازار هم‌خوان نیست'}</div>:car.suspicious?<div className="result-risk">مشکوک: {car.riskFlags?.[0]||'قیمت خارج از محدوده بازار'}</div>:null}<div className="result-price"><div><small>قیمت آگهی</small><b>{car.price?`${toman(car.price)} میلیون تومان`:(car.priceText||'توافقی')}</b></div>{car.market>0?<span>{num(Math.max(0,car.discount))}٪ زیر بازار</span>:<span className="no-market">داده بازار کافی نیست</span>}</div><div className="result-market"><small>میانگین بازار {car.marketLevelLabel?`(${car.marketLevelLabel})`:''}</small><b>{car.market>0?`${toman(car.market)} میلیون`:'—'}</b><small>{car.marketSamples>0?`${num(car.marketSamples)} نمونه`:''}</small></div>{car.referencePrice>0&&car.trust!=='reject'&&<div className="result-reference"><small>قیمت مرجع بازار</small><b>{toman(car.referencePrice)} میلیون</b></div>}{car.alsoOn?.length>0&&<div className="result-alsoon">این خودرو در {num(car.alsoOn.length+1)} سایت آگهی شده: {car.alsoOn.join('، ')}</div>}<WhyScore car={car}/>{settings?.feature_comparison!=='false'&&<button className={`compare-card-button ${compared?'active':''}`} onClick={()=>{const result=toggleCompared(car);setCompared(isCompared(car.id));onSave?.(result.full?'حداکثر چهار خودرو قابل مقایسه است.':result.added?'به مقایسه اضافه شد.':'از مقایسه حذف شد.')}}><GitCompareArrows/>{compared?'انتخاب‌شده برای مقایسه':'افزودن به مقایسه'}</button>}<a href={car.link} target="_blank" rel="noreferrer">مشاهده در دیوار <ArrowUpLeft/></a></div></article>}
 
 const fa2en=value=>String(value||'').replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
 const digitsOnly=value=>fa2en(value).replace(/\D/g,'')
@@ -34,12 +176,15 @@ function sortFromUrl(){const value=new URLSearchParams(window.location.search).g
 
 export function CarsPage({onToast}){
  const [filters,setFilters]=useState(filtersFromUrl),[cars,setCars]=useState([]),[total,setTotal]=useState(0),[loading,setLoading]=useState(true),[mobileFilters,setMobileFilters]=useState(false),[sort,setSort]=useState(sortFromUrl),[displaySettings,setDisplaySettings]=useState({}),[catalog,setCatalog]=useState({cities:[],categories:[],brands:[],models:[]}),[riskUnlocked,setRiskUnlocked]=useState(false),[marketIntel,setMarketIntel]=useState(null)
- const managedCities=catalog.cities?.length?catalog.cities.map(city=>[city.id,city.name]):parsePairs(displaySettings.supported_cities,cities),managedBrands=catalog.brands?.length?['همه برندها',...catalog.brands]:displaySettings.vehicle_brands?['همه برندها',...parseLines(displaySettings.vehicle_brands)]:brands,managedModels=catalog.models?.find(item=>item.brand===filters.brand)?.models||[],managedColors=displaySettings.vehicle_colors?parseLines(displaySettings.vehicle_colors):['سفید','مشکی','خاکستری','نقره‌ای','آبی']
+ const segmentTree=catalog.segments?.[filters.category]||null
+ const segmentBrands=segmentTree?['همه برندها',...segmentTree.brands.map(entry=>entry.brand)]:(catalog.brands?.length?['همه برندها',...catalog.brands]:brands)
+ const segmentModels=segmentTree?(segmentTree.brands.find(entry=>entry.brand===filters.brand)?.models||[]):(catalog.models?.find(item=>item.brand===filters.brand)?.models||[])
+ const cityGroups=catalog.cityGroups?.length?catalog.cityGroups:[],managedCities=catalog.cities?.length?catalog.cities.map(city=>[city.id,city.name]):parsePairs(displaySettings.supported_cities,cities),managedBrands=catalog.brands?.length?['همه برندها',...catalog.brands]:displaySettings.vehicle_brands?['همه برندها',...parseLines(displaySettings.vehicle_brands)]:brands,managedModels=catalog.models?.find(item=>item.brand===filters.brand)?.models||[],managedColors=displaySettings.vehicle_colors?parseLines(displaySettings.vehicle_colors):['سفید','مشکی','خاکستری','نقره‌ای','آبی']
  async function search(limit=24,base=filters){setLoading(true);const p=new URLSearchParams({limit:String(limit),city:base.city,sort});Object.entries(base).forEach(([k,v])=>{if(v&&v!=='همه برندها')p.set(k,v)});try{const r=await fetch(`/api/listings?${p}`),d=await r.json();setCars(d.items||[]);setTotal(d.totalMatches||0);setRiskUnlocked(Boolean(d.riskInsightsUnlocked));setMarketIntel(d.marketIntel||null)}catch{setCars(fallbackCars);setTotal(fallbackCars.length);setMarketIntel(null);onToast?.('ارتباط با سرور برقرار نشد؛ داده نمونه نمایش داده شد.')}finally{setLoading(false);setMobileFilters(false)}}
  const changeCategory=id=>{const next={...filters,category:id};setFilters(next);search(24,next)}
  useEffect(()=>{search();fetch('/api/settings/public').then(response=>response.json()).then(setDisplaySettings).catch(()=>{});fetch('/api/catalog/vehicles').then(response=>response.json()).then(setCatalog).catch(()=>{})},[])
- const filterPanel=<aside className={'filters-sidebar '+(mobileFilters?'show':'')}><div className="filter-head"><h3><SlidersHorizontal/> فیلترها</h3><button onClick={()=>setFilters({...defaultCarFilters})}>حذف همه</button><button className="mobile-filter-close" onClick={()=>setMobileFilters(false)}><X/></button></div><div className="filter-group"><b>شهر</b><div className="select-box"><select value={filters.city} onChange={e=>setFilters({...filters,city:e.target.value})}>{managedCities.map(c=><option value={c[0]} key={c[0]}>{c[1]}</option>)}</select><ChevronDown/></div></div><div className="filter-group"><b>برند و مدل</b><div className="select-box"><select value={filters.brand} onChange={e=>setFilters({...filters,brand:e.target.value})}>{(filters.category==='motorcycles'?['همه برندها','هوندا','یاماها','باجاج','کویر','بنلی']:filters.category==='heavy'?['همه برندها','ولوو','اسکانیا','بنز','ایویکو','ماک']:managedBrands).map(x=><option key={x}>{x}</option>)}</select><ChevronDown/></div></div>{managedModels.length>0&&<div className="filter-group"><b>مدل خودرو</b><div className="select-box"><select value={filters.model||''} onChange={e=>setFilters({...filters,model:e.target.value})}><option value="">همه مدل‌ها</option>{managedModels.map(model=><option key={model}>{model}</option>)}</select><ChevronDown/></div></div>}<Range label="قیمت (تومان)" minName="minPrice" maxName="maxPrice" filters={filters} setFilters={setFilters} placeholder1="از قیمت" placeholder2="تا قیمت"/><Range label="سال ساخت" minName="minYear" maxName="maxYear" filters={filters} setFilters={setFilters} placeholder1="مثلاً ۱۳۹۸" placeholder2="مثلاً ۱۴۰۳"/><div className="filter-group"><b>حداکثر کارکرد</b><input inputMode="numeric" placeholder="مثلاً ۸۰۰۰۰ کیلومتر" value={filters.maxUsage} onChange={e=>setFilters({...filters,maxUsage:digitsOnly(e.target.value)})}/></div><div className="filter-group"><b>گیربکس</b><div className="choice-row">{['دنده‌ای','اتوماتیک'].map(x=><button className={filters.gearbox===x?'active':''} onClick={()=>setFilters({...filters,gearbox:filters.gearbox===x?'':x})} key={x}>{x}</button>)}</div></div><div className="filter-group"><b>وضعیت بدنه</b><div className="select-box"><select value={filters.body} onChange={e=>setFilters({...filters,body:e.target.value})}><option value="">همه</option><option>بدون رنگ</option><option>یک لکه رنگ</option><option>چند لکه رنگ</option><option>تصادفی</option></select><ChevronDown/></div></div><div className="filter-group"><b>رنگ</b><div className="select-box"><select value={filters.color} onChange={e=>setFilters({...filters,color:e.target.value})}><option value="">همه رنگ‌ها</option>{managedColors.map(color=><option key={color}>{color}</option>)}</select><ChevronDown/></div></div><div className="filter-group"><b>نوع فروشنده</b><div className="choice-row">{['شخصی','نمایشگاه'].map(x=><button className={filters.seller===x?'active':''} onClick={()=>setFilters({...filters,seller:filters.seller===x?'':x})} key={x}>{x}</button>)}</div></div>{riskUnlocked?<label className="suspicious-toggle"><input type="checkbox" checked={filters.suspiciousOnly==='true'} onChange={e=>setFilters({...filters,suspiciousOnly:String(e.target.checked)})}/><span><b>فقط آگهی‌های مشکوک</b><small>تحلیل اختصاصی اشتراک حرفه‌ای</small></span></label>:<a className="risk-pro-lock" href="/pricing"><ShieldCheck/><span><b>تشخیص آگهی مشکوک</b><small>ویژه اعضای اشتراک پرو</small></span></a>}<button className="primary apply-filter" onClick={()=>search()}>اعمال فیلترها</button></aside>
- return <main className="cars-page"><div className="wrap"><div className="page-breadcrumb"><a href="/">خودروتو</a><span>/</span><b>آگهی‌های خودرو</b></div><div className="cars-hero"><div><span className="kicker">بازار خودرو</span><h1>خودروی مناسب تو همین‌جاست</h1><p>میان هزاران آگهی جست‌وجو کن و فرصت‌های زیر قیمت بازار را زودتر ببین.</p></div><div className="market-mini"><b>{num(total)}</b><span>فرصت قیمت‌دار</span></div></div><div className="market-categories">{[['light','سواری و وانت'],['heavy','خودرو سنگین'],['motorcycles','موتورسیکلت'],['parts-accessories','قطعات و لوازم'],['vehicles-services','خدمات خودرو']].map(([id,label])=><button key={id} className={filters.category===id?'active':''} onClick={()=>changeCategory(id)}>{id==='motorcycles'?<Bike/>:id==='heavy'?<Truck/>:<Car/>} <span>{label}</span></button>)}</div><div className="divar-search"><Search/><input value={filters.query} onChange={e=>setFilters({...filters,query:e.target.value})} onKeyDown={e=>e.key==='Enter'&&search()} placeholder="جست‌وجو در آگهی‌ها؛ مثلاً پژو ۲۰۷ اتوماتیک..."/><div className="search-city"><MapPin/><select value={filters.city} onChange={e=>setFilters({...filters,city:e.target.value})}>{managedCities.map(c=><option value={c[0]} key={c[0]}>{c[1]}</option>)}</select></div><button onClick={()=>search()}>جست‌وجو</button></div><button className="mobile-filter-button" onClick={()=>setMobileFilters(true)}><SlidersHorizontal/> فیلترها</button><div className="listing-layout">{filterPanel}<section className="results">{marketIntel&&<div className="market-intel"><BarChart3/><div><b>شناسنامهٔ بازار {marketIntel.model}</b><span>میانگین <strong>{toman(marketIntel.avg)} میلیون تومان</strong>{' '}میانه {toman(marketIntel.median)} میلیون{' '}· از {num(marketIntel.total)} آگهی واقعی</span>{marketIntel.yearFocus&&<span>مدل {num(marketIntel.yearFocus.year)}: میانگین <strong>{toman(marketIntel.yearFocus.avg)} میلیون تومان</strong> ({num(marketIntel.yearFocus.samples)} نمونه)</span>}</div><a href="/methodology">روش محاسبه</a></div>}<div className="results-head"><div><b>{num(total)} آگهی</b><span>مرتب‌شده براساس بهترین فرصت</span></div><div className="select-box sort"><select value={sort} onChange={e=>{setSort(e.target.value);setTimeout(()=>search(),0)}}><option value="score">بهترین فرصت</option><option value="newest">جدیدترین</option><option value="cheap">ارزان‌ترین</option><option value="expensive">گران‌ترین</option></select><ChevronDown/></div></div>{loading?<div className="loading-grid">{[1,2,3,4,5,6].map(x=><i key={x}/>)}</div>:<div className={`results-grid mobile-${displaySettings.mobile_listing_mode||'carousel'}`}>{cars.map(c=><ListingCard key={c.id} car={c} onSave={onToast} settings={displaySettings}/>)}</div>}{!loading&&cars.length<total&&<button className="secondary load-results" onClick={()=>search(Math.min(200,cars.length+24))}>نمایش آگهی‌های بیشتر <ArrowLeft/></button>}</section></div></div></main>
+ const filterPanel=<aside className={'filters-sidebar '+(mobileFilters?'show':'')}><div className="filter-head"><h3><SlidersHorizontal/> فیلترها</h3><button onClick={()=>setFilters({...defaultCarFilters})}>حذف همه</button><button className="mobile-filter-close" onClick={()=>setMobileFilters(false)}><X/></button></div><div className="filter-group"><b>استان و شهر</b><CityPicker groups={cityGroups} value={filters.city} onChange={city=>setFilters({...filters,city})}/></div><div className="filter-group"><b>برند و مدل</b><div className="select-box"><select value={filters.brand} onChange={e=>setFilters({...filters,brand:e.target.value,model:''})}>{segmentBrands.map(x=><option key={x}>{x}</option>)}</select><ChevronDown/></div></div>{segmentModels.length>0&&<div className="filter-group"><b>مدل</b><div className="select-box"><select value={filters.model||''} onChange={e=>setFilters({...filters,model:e.target.value})}><option value="">همه مدل‌ها</option>{segmentModels.map(model=><option key={model}>{model}</option>)}</select><ChevronDown/></div></div>}<Range label="قیمت (تومان)" minName="minPrice" maxName="maxPrice" filters={filters} setFilters={setFilters} placeholder1="از قیمت" placeholder2="تا قیمت"/><Range label="سال ساخت" minName="minYear" maxName="maxYear" filters={filters} setFilters={setFilters} placeholder1="مثلاً ۱۳۹۸" placeholder2="مثلاً ۱۴۰۳"/><div className="filter-group"><b>حداکثر کارکرد</b><input inputMode="numeric" placeholder="مثلاً ۸۰۰۰۰ کیلومتر" value={filters.maxUsage} onChange={e=>setFilters({...filters,maxUsage:digitsOnly(e.target.value)})}/></div><div className="filter-group"><b>گیربکس</b><div className="choice-row">{['دنده‌ای','اتوماتیک'].map(x=><button className={filters.gearbox===x?'active':''} onClick={()=>setFilters({...filters,gearbox:filters.gearbox===x?'':x})} key={x}>{x}</button>)}</div></div><div className="filter-group"><b>وضعیت بدنه</b><div className="select-box"><select value={filters.body} onChange={e=>setFilters({...filters,body:e.target.value})}><option value="">همه</option><option>بدون رنگ</option><option>یک لکه رنگ</option><option>چند لکه رنگ</option><option>تصادفی</option></select><ChevronDown/></div></div><div className="filter-group"><b>رنگ</b><div className="select-box"><select value={filters.color} onChange={e=>setFilters({...filters,color:e.target.value})}><option value="">همه رنگ‌ها</option>{managedColors.map(color=><option key={color}>{color}</option>)}</select><ChevronDown/></div></div><div className="filter-group"><b>نوع فروشنده</b><div className="choice-row">{['شخصی','نمایشگاه'].map(x=><button className={filters.seller===x?'active':''} onClick={()=>setFilters({...filters,seller:filters.seller===x?'':x})} key={x}>{x}</button>)}</div></div>{riskUnlocked?<label className="suspicious-toggle"><input type="checkbox" checked={filters.suspiciousOnly==='true'} onChange={e=>setFilters({...filters,suspiciousOnly:String(e.target.checked)})}/><span><b>فقط آگهی‌های مشکوک</b><small>تحلیل اختصاصی اشتراک حرفه‌ای</small></span></label>:<a className="risk-pro-lock" href="/pricing"><ShieldCheck/><span><b>تشخیص آگهی مشکوک</b><small>ویژه اعضای اشتراک پرو</small></span></a>}<button className="primary apply-filter" onClick={()=>search()}>اعمال فیلترها</button></aside>
+ return <main className="cars-page"><div className="wrap"><div className="page-breadcrumb"><a href="/">خودروتو</a><span>/</span><b>آگهی‌های خودرو</b></div><div className="cars-hero"><div><span className="kicker">بازار خودرو</span><h1>خودروی مناسب تو همین‌جاست</h1><p>میان هزاران آگهی جست‌وجو کن و فرصت‌های زیر قیمت بازار را زودتر ببین.</p></div><div className="market-mini"><b>{num(total)}</b><span>فرصت قیمت‌دار</span></div></div><div className="market-categories">{[['light','سواری و وانت'],['heavy','خودرو سنگین'],['motorcycles','موتورسیکلت'],['parts-accessories','قطعات و لوازم'],['vehicles-services','خدمات خودرو']].map(([id,label])=><button key={id} className={filters.category===id?'active':''} onClick={()=>changeCategory(id)}>{id==='motorcycles'?<Bike/>:id==='heavy'?<Truck/>:<Car/>} <span>{label}</span></button>)}</div><div className="divar-search"><Search/><input value={filters.query} onChange={e=>setFilters({...filters,query:e.target.value})} onKeyDown={e=>e.key==='Enter'&&search()} placeholder="جست‌وجو در آگهی‌ها؛ مثلاً پژو ۲۰۷ اتوماتیک..."/><div className="search-city"><CityPicker compact groups={cityGroups} value={filters.city} onChange={city=>setFilters({...filters,city})}/></div><button onClick={()=>search()}>جست‌وجو</button></div><button className="mobile-filter-button" onClick={()=>setMobileFilters(true)}><SlidersHorizontal/> فیلترها</button><div className="listing-layout">{filterPanel}<section className="results">{marketIntel&&<div className="market-intel"><BarChart3/><div><b>شناسنامهٔ بازار {marketIntel.model}</b><span>میانگین <strong>{toman(marketIntel.avg)} میلیون تومان</strong>{' '}میانه {toman(marketIntel.median)} میلیون{' '}· از {num(marketIntel.total)} آگهی واقعی</span>{marketIntel.yearFocus&&<span>مدل {num(marketIntel.yearFocus.year)}: میانگین <strong>{toman(marketIntel.yearFocus.avg)} میلیون تومان</strong> ({num(marketIntel.yearFocus.samples)} نمونه)</span>}</div><MarketTrend intel={marketIntel} category={filters.category}/><a href="/methodology">روش محاسبه</a></div>}<div className="results-head"><div><b>{num(total)} آگهی</b><span>مرتب‌شده براساس بهترین فرصت</span></div><div className="select-box sort"><select value={sort} onChange={e=>{setSort(e.target.value);setTimeout(()=>search(),0)}}><option value="score">بهترین فرصت</option><option value="newest">جدیدترین</option><option value="cheap">ارزان‌ترین</option><option value="expensive">گران‌ترین</option></select><ChevronDown/></div></div>{loading?<div className="loading-grid">{[1,2,3,4,5,6].map(x=><i key={x}/>)}</div>:<div className={`results-grid mobile-${displaySettings.mobile_listing_mode||'carousel'}`}>{cars.map(c=><ListingCard key={c.id} car={c} onSave={onToast} settings={displaySettings}/>)}</div>}{!loading&&cars.length<total&&<button className="secondary load-results" onClick={()=>search(Math.min(200,cars.length+24))}>نمایش آگهی‌های بیشتر <ArrowLeft/></button>}</section></div></div></main>
 }
 
 const defaultPlans=[{id:'free',name:'رایگان',price:'۰',desc:'برای آشنایی با بازار',features:['۶ فرصت برتر','فیلترهای پایه','لینک مستقیم دیوار']},{id:'pro',name:'خودروتو پرو',price:'۱۹۹٬۰۰۰',desc:'برای خرید جدی خودرو',popular:true,features:['مشاهده همه فرصت‌ها','فیلتر کامل خودرو','ذخیره و اعلان هوشمند','تاریخچه قیمت','بدون تبلیغات']},{id:'dealer',name:'نمایشگاه حرفه‌ای',price:'۴۹۹٬۰۰۰',desc:'برای معامله‌گران و نمایشگاه‌ها',features:['پنل موجودی و قیمت هدف','مدیریت مشتری و سرنخ فروش','گزارش سود موجودی و بازار','خروجی CSV موجودی و مشتریان','۵ پایش هم‌زمان بازار']}]

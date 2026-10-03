@@ -180,6 +180,61 @@ async function enrichWebItem(item, env, fetchImpl) {
   }
 }
 
+/**
+ * Enrich many listings with their detail page (colour, mileage, exact build year).
+ *
+ * WHY THIS MATTERS
+ * The search endpoint never returns colour or mileage, so before this the platform
+ * had `color:'—'` and `km:0` on every car. That silently disabled per-colour
+ * averages completely and made every mileage filter a no-op. Only 12 items used to
+ * be enriched, and only AFTER scoring, so the baseline never saw the data at all.
+ *
+ * Enrichment is therefore now: bounded-concurrency, cached across runs (so coverage
+ * accumulates cycle by cycle instead of re-fetching the same tokens), and applied
+ * BEFORE the market is computed.
+ */
+export async function enrichListings(rows, {
+  env = process.env,
+  fetchImpl = fetch,
+  limit = Number(env.DIVAR_ENRICH_LIMIT) || 200,
+  concurrency = Math.max(1, Number(env.DIVAR_ENRICH_CONCURRENCY) || 4),
+  delayMs = Number(env.DIVAR_ENRICH_DELAY_MS) || 120,
+  cache = null,
+} = {}) {
+  const enriched = new Map()
+  const pending = []
+
+  for (const item of rows) {
+    const cached = cache?.get?.(item.token)
+    if (cached) { enriched.set(item.token, { ...item, ...cached }); continue }
+    if (pending.length < limit) pending.push(item)
+  }
+
+  let index = 0
+  let fetched = 0, failed = 0
+  async function worker() {
+    while (index < pending.length) {
+      const item = pending[index++]
+      const result = await enrichWebItem(item, env, fetchImpl)
+      const gained = result.color !== item.color || result.km !== item.km || result.year !== item.year
+      if (gained) {
+        fetched += 1
+        enriched.set(item.token, result)
+        cache?.set?.(item.token, { color: result.color, km: result.km, year: result.year })
+      } else {
+        failed += 1
+      }
+      if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs))
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker))
+
+  const items = rows.map(item => enriched.get(item.token) || item)
+  const withColor = items.filter(item => item.color && item.color !== '—').length
+  const withKm = items.filter(item => Number(item.km) > 0).length
+  return { items, stats: { requested: pending.length, fetched, failed, cached: rows.length - pending.length, withColor, withKm } }
+}
+
 function describeBody(body) {
   if (body == null) return ''
   const message = body.message
@@ -273,7 +328,7 @@ export async function fetchKenarListings({ filters = {}, env = process.env, fetc
   return { source: 'kenar', category: filters.category || env.DIVAR_CATEGORY || 'light', items: enriched, observedTokens: normalized.map(item => item.id), totalAnalyzed: normalized.length, fullSnapshot: false, updatedAt: new Date().toISOString() }
 }
 
-export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch } = {}) {
+export async function fetchWebListings({ filters = {}, env = process.env, fetchImpl = fetch, detailCache = null, reference = null, knownTokens = null } = {}) {
   const configuredCityIds = String(env.DIVAR_CITY_IDS || '1').split(',').map(value => value.trim()).filter(value => /^\d+$/.test(value))
   const cityIds = filters.cityIds?.length ? filters.cityIds : configuredCityIds
   const category = ['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(filters.category) ? filters.category : env.DIVAR_WEB_CATEGORY || env.DIVAR_CATEGORY || 'light'
@@ -298,6 +353,21 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
   const hardMaxPages = Math.max(1, Number(env.DIVAR_HARD_MAX_PAGES) || 500)
   const maxPages = requestedMaxPages > 0 ? Math.min(requestedMaxPages, hardMaxPages) : hardMaxPages
   const requestDelay = Math.max(0, Number(env.DIVAR_REQUEST_DELAY_MS) || 450)
+  // --- incremental crawl ----------------------------------------------------
+  // Divar returns newest-first. Once we hit a run of pages whose listings we have
+  // all seen recently, everything further back is older still, so there is nothing
+  // new to gain by paging on. Walking all 500 pages every cycle was the single
+  // biggest reason a refresh took so long and hammered the upstream.
+  // Guard rails: only for an unfiltered crawl, never on the first pages, and the
+  // result is explicitly NOT a full snapshot so reconciliation cannot wrongly
+  // deactivate the listings we chose not to re-read.
+  const incrementalEnabled = env.DIVAR_INCREMENTAL !== 'false' && knownTokens && knownTokens.size > 0 && !filters.queryText
+  const warmupPages = Math.max(1, Number(env.DIVAR_INCREMENTAL_WARMUP_PAGES) || 3)
+  const stopAfterKnownPages = Math.max(1, Number(env.DIVAR_INCREMENTAL_STOP_PAGES) || 2)
+  let consecutiveKnownPages = 0
+  let stoppedEarly = false
+  let newTokens = 0
+
   const rows = []
   const seen = new Set()
   let cursor = null
@@ -313,11 +383,27 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
       method: 'POST', provider: 'web', headers: webHeaders(env), body: JSON.stringify({ ...baseBody, pagination_data: paginationData }),
     }, fetchImpl)
     pagesFetched += 1
+    let pageTotal = 0
+    let pageNew = 0
     for (const widget of payload.list_widgets || []) {
       if (widget.widget_type !== 'POST_ROW') continue
       const item = normalizeWebItem(widget)
-      if (item.id && (item.price || ['parts-accessories','vehicles-services'].includes(category)) && !seen.has(item.id)) { seen.add(item.id); rows.push(item) }
+      if (!item.id) continue
+      if (!(item.price || ['parts-accessories','vehicles-services'].includes(category))) continue
+      if (seen.has(item.id)) continue
+      seen.add(item.id)
+      rows.push(item)
+      pageTotal += 1
+      if (!knownTokens?.has(item.id)) { pageNew += 1; newTokens += 1 }
     }
+
+    if (incrementalEnabled && page > warmupPages) {
+      // A page is "exhausted" when every listing on it was already in our database.
+      if (pageTotal > 0 && pageNew === 0) consecutiveKnownPages += 1
+      else consecutiveKnownPages = 0
+      if (consecutiveKnownPages >= stopAfterKnownPages) { stoppedEarly = true; break }
+    }
+
     const pagination = payload.pagination || {}
     hasNextPage = Boolean(pagination.has_next_page && pagination.data)
     if (!hasNextPage) break
@@ -331,18 +417,18 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
     const filteredRows=applyLocalFilters(rows,filters).filter(item=>item.image)
     const enriched=await Promise.all(filteredRows.slice(0,12).map(item=>enrichWebItem(item,env,fetchImpl)))
     const items=[...enriched,...filteredRows.slice(12)].map(item=>({...item,market:item.price||0,score:item.price?55:50,discount:0,sampleSize:filteredRows.length,label:item.price?'قیمت ثبت‌شده':'قیمت توافقی'}))
-    return{source:'divar-web',category,scope:`web:${category}:${[...cityIds].sort().join(',')}`,items,observedTokens:rows.map(item=>item.id),totalAnalyzed:rows.length,excludedNoPhoto:rows.length-filteredRows.length,suspiciousCount:0,pagesFetched,truncated:hasNextPage,fullSnapshot:!hasNextPage&&!filters.queryText,updatedAt:new Date().toISOString()}
+    return{source:'divar-web',category,scope:`web:${category}:${[...cityIds].sort().join(',')}`,items,observedTokens:rows.map(item=>item.id),totalAnalyzed:rows.length,excludedNoPhoto:rows.length-filteredRows.length,suspiciousCount:0,pagesFetched,truncated:hasNextPage,fullSnapshot:!hasNextPage&&!stoppedEarly&&!filters.queryText,updatedAt:new Date().toISOString()}
   }
-  const analysis = analyzeListings(applyLocalFilters(rows, filters), { category, includeNoPhoto: false })
-  const ranked = analysis.items
-  if (filters.sort === 'cheap') ranked.sort((a,b)=>a.price-b.price)
-  if (filters.sort === 'expensive') ranked.sort((a,b)=>b.price-a.price)
-  const enrichedTop = await Promise.all(ranked.slice(0, 12).map(item => enrichWebItem(item, env, fetchImpl)))
-  const finalAnalysis = analyzeListings([...enrichedTop, ...ranked.slice(12)], { category, includeNoPhoto: false })
+  // Enrich FIRST so colour, mileage and the exact build year reach the market
+  // baseline — not just the twelve cards that happened to rank highest.
+  const filtered = applyLocalFilters(rows, filters)
+  const { items: detailed, stats: enrichStats } = await enrichListings(filtered, { env, fetchImpl, cache: detailCache })
+  const finalAnalysis = analyzeListings(detailed, { category, includeNoPhoto: false, reference })
   const items = finalAnalysis.items
+  const analysis = finalAnalysis
   if (filters.sort === 'cheap') items.sort((a,b)=>a.price-b.price)
   if (filters.sort === 'expensive') items.sort((a,b)=>b.price-a.price)
-  return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, pagesFetched, truncated: hasNextPage, fullSnapshot: !hasNextPage && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
+  return { source: 'divar-web', category, scope: `web:${category}:${[...cityIds].sort().join(',')}`, items, observedTokens: rows.map(item => item.id), totalAnalyzed: rows.length, excludedNoPhoto: analysis.excludedNoPhoto, suspiciousCount: finalAnalysis.suspiciousCount, rejectedCount: finalAnalysis.rejectedCount, reviewCount: finalAnalysis.reviewCount, enrichment: enrichStats, incremental: { enabled: Boolean(incrementalEnabled), stoppedEarly, newTokens, knownTokens: knownTokens?.size || 0 }, pagesFetched, truncated: hasNextPage, fullSnapshot: !hasNextPage && !stoppedEarly && !filters.queryText && !filters.minPrice && !filters.maxPrice && !filters.minYear && !filters.maxYear && !filters.maxUsage && !filters.gearbox && !filters.body && !filters.color && !filters.seller, updatedAt: new Date().toISOString() }
 }
 
 export async function discoverDivarVehicleCatalog({ env = process.env, fetchImpl = fetch } = {}) {
@@ -395,7 +481,7 @@ export async function discoverDivarVehicleCatalog({ env = process.env, fetchImpl
   return { categories:[...categories.values()], brands:[...brands], models:[...models].map(([brand,items])=>({brand,models:[...items]})), syncedAt:new Date().toISOString(), source:'divar-web' }
 }
 
-export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null } = {}) {
+export function createDivarService({ env = process.env, fetchImpl = fetch, cacheTtlMs = 10 * 60 * 1000, cacheFile = null, detailCache = null, getReference = () => null, getKnownTokens = () => null } = {}) {
   const cache = new Map()
   const inflight = new Map()
   let hydrated = false
@@ -431,7 +517,7 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     await hydrateCache()
     const key = JSON.stringify(filters)
     if (inflight.has(key)) return inflight.get(key)
-    const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
+    const request = (provider === 'kenar' ? fetchKenarListings({ filters, env, fetchImpl }) : provider === 'web' ? fetchWebListings({ filters, env, fetchImpl, detailCache, reference: getReference(), knownTokens: getKnownTokens(filters.category) }) : Promise.reject(new DivarUpstreamError('Divar integration is not configured', { status: 503, code: 'NOT_CONFIGURED' })))
       .then(value => { lastSuccessAt=new Date().toISOString();lastError=null;cache.set(key, { time: Date.now(), value }); persistCache(); return value })
       .catch(error=>{lastError={code:error.code||'UPSTREAM_ERROR',message:error.message,at:new Date().toISOString()};throw error})
       .finally(() => inflight.delete(key))
