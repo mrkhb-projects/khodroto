@@ -237,6 +237,18 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · dealer tools are gated', () => {
+  it('refuses the showroom dashboard to anyone without the plan', async () => {
+    expect((await get('/api/dealer/summary')).status).toBe(401)
+    const created = await get('/api/dealer/inventory', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'x' }),
+    })
+    expect(created.status).toBe(401)
+    expect((await get('/api/dealer/export.csv')).status).toBe(401)
+  })
+})
+
 describe('e2e · account-backed features need an account', () => {
   it('refuses saved listings, notifications and analytics to anonymous callers', async () => {
     for (const route of ['/api/saved', '/api/notifications']) {

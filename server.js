@@ -503,7 +503,74 @@ app.get('/api/market/sellers', rateLimit({ max: 30 }), (_req, res) => {
 app.get('/api/plans',(_req,res)=>res.json({items:store.plans(true)}))
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site_name','site_tagline','support_phone','support_email','maintenance_mode','card_golden','card_good','card_fair','card_expensive','card_suspicious','mobile_listing_mode','hero_ticker','hero_title','hero_description','section_slider','section_search','section_opportunities','section_campaign','section_method','section_score','section_faq','feature_comparison','feature_alerts','feature_pricing','score_golden_min','score_good_min','vehicle_categories','vehicle_brands','supported_cities','vehicle_colors','default_city','default_sort','enable_motorcycles','enable_heavy_vehicles','faq_content','faq_enabled','faq_home_count','header_links','footer_platform_links','footer_help_links','footer_description','copyright_text','public_font_scale','show_announcement','enable_motion','campaign_enabled','campaign_title','campaign_description','campaign_discount','campaign_cta','seo_title','seo_description','og_title','og_description','og_image'];res.json(Object.fromEntries(keys.map(key=>[key,s[key]])))})
-app.get('/api/dealer/summary',requireDealer,(req,res)=>{const inventory=store.dealerInventory(req.user.id),leads=store.dealerLeads(req.user.id),investment=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.buy_price,0),expected=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.target_price,0);res.json({inventory,leads,metrics:{inventoryCount:inventory.length,available:inventory.filter(item=>item.status==='available').length,activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,investment,expectedProfit:Math.max(0,expected-investment)},market:store.publicStats()})})
+/**
+ * Dealer dashboard.
+ *
+ * It used to be a private spreadsheet: a dealer typed in what they paid and what
+ * they hoped to get, and the platform — whose entire reason to exist is knowing
+ * what a car is worth — said nothing about either number. Every inventory row is
+ * now valued against the live market, which is the only thing here a showroom
+ * cannot already do in Excel.
+ */
+app.get('/api/dealer/summary',requireDealer,(req,res)=>{
+ const inventory=store.dealerInventory(req.user.id)
+ const leads=store.dealerLeads(req.user.id)
+ let priceIndex=null
+ try{priceIndex=marketAnalysis('light').priceIndex}catch{}
+
+ const priced=inventory.map(item=>{
+  const valuation=estimateValue({
+   title:item.title,brand:item.brand,model:item.model,year:item.year,category:'light',
+  },{priceIndex,reference:referenceIndex})
+  if(!valuation.ok)return{...item,market:null,marketNote:valuation.message}
+  const market=valuation.estimate
+  const target=Number(item.target_price)||0
+  const bought=Number(item.buy_price)||0
+  // Positive = asking above the market, which is what keeps a car on the forecourt.
+  const askGap=target&&market?Number((((target-market)/market)*100).toFixed(1)):null
+  const margin=target&&bought?target-bought:null
+  return{
+   ...item,
+   market,
+   marketRange:valuation.range,
+   marketConfidence:valuation.confidence,
+   askGap,
+   margin,
+   // A suggestion, not an instruction: the midpoint between the market value and
+   // what they are asking, so the advice is never a cliff.
+   suggestedPrice:market&&target&&askGap>8?Math.round((market+target)/2):null,
+   verdict:!target||!market?'نامشخص'
+    :askGap>15?'خیلی بالاتر از بازار؛ احتمال ماندن در نمایشگاه'
+    :askGap>8?'بالاتر از بازار؛ فروش کند خواهد بود'
+    :askGap<-8?'زیر بازار؛ جا برای افزایش قیمت هست'
+    :'هم‌تراز با بازار',
+  }
+ })
+
+ const unsold=priced.filter(item=>item.status!=='sold')
+ const investment=unsold.reduce((sum,item)=>sum+(Number(item.buy_price)||0),0)
+ const expected=unsold.reduce((sum,item)=>sum+(Number(item.target_price)||0),0)
+ const marketValue=unsold.reduce((sum,item)=>sum+(item.market||Number(item.target_price)||0),0)
+ const overpriced=unsold.filter(item=>item.askGap!==null&&item.askGap>8)
+
+ res.json({
+  inventory:priced,
+  leads,
+  metrics:{
+   inventoryCount:inventory.length,
+   available:inventory.filter(item=>item.status==='available').length,
+   activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,
+   investment,
+   expectedProfit:expected-investment,
+   // What the market says the unsold stock is worth right now, versus the asking
+   // total — the single number a showroom owner actually wants each morning.
+   marketValue,
+   marketVsAsking:expected?Number((((marketValue-expected)/expected)*100).toFixed(1)):null,
+   overpricedCount:overpriced.length,
+  },
+  market:store.publicStats(),
+ })
+})
 app.post('/api/dealer/inventory',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerInventory(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
 app.patch('/api/dealer/inventory/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerInventory(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
 app.delete('/api/dealer/inventory/:id',requireDealer,(req,res)=>{store.deleteDealerInventory(req.user.id,Number(req.params.id));res.json({ok:true})})

@@ -9,7 +9,10 @@ describe('subscription-gated suspicious listing insights', () => {
     expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'free' })).toBe(false)
     expect(canViewRiskInsights({ role: 'user' }, { status: 'expired', plan: 'pro' })).toBe(false)
     expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'pro' })).toBe(true)
-    expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'dealer' })).toBe(false)
+    // The dealer plan is the most expensive one; excluding it here meant paying
+    // more for strictly less than pro.
+    expect(canViewRiskInsights({ role: 'user' }, { status: 'active', plan: 'dealer' })).toBe(true)
+    expect(canViewRiskInsights({ role: 'user' }, { status: 'expired', plan: 'dealer' })).toBe(false)
     expect(canViewRiskInsights({ role: 'admin' }, null)).toBe(true)
   })
 
