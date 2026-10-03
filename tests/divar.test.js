@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createDivarService, fetchKenarListings, fetchWebListings, parseNumber, rankListings } from '../src/server/divar.js'
+import { createDivarService, extractYearFromText, fetchKenarListings, fetchWebListings, normalizeVehicleYear, parseNumber, rankListings } from '../src/server/divar.js'
 
 describe('Divar integration', () => {
   it('parses Persian and Latin prices', () => {
@@ -8,12 +8,10 @@ describe('Divar integration', () => {
   })
 
   it('ranks below-median listings without fabricated values', () => {
-    const ranked = rankListings([
-      { id: '1', title: 'پژو ۲۰۷', price: 800 },
-      { id: '2', title: 'پژو ۲۰۷', price: 1000 },
-      { id: '3', title: 'پژو ۲۰۷', price: 1200 },
-    ])
-    expect(ranked[0]).toMatchObject({ id: '1', market: 1000, discount: 20, sampleSize: 3 })
+    const ranked = rankListings(
+      [600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400].map((price, index) => ({ id: String(price), title: 'پژو ۲۰۷', price })),
+    )
+    expect(ranked[0]).toMatchObject({ id: '600', market: 1000, discount: 40, sampleSize: 9 })
     expect(ranked[0].score).toBeGreaterThan(ranked.at(-1).score)
   })
 
@@ -25,6 +23,8 @@ describe('Divar integration', () => {
         { token: 'a', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '800' }, vehicles_fields: { usage: '20000' } },
         { token: 'b', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1000' } },
         { token: 'c', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1200' } },
+        { token: 'd', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '700' } },
+        { token: 'e', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1300' } },
       ] }) }
       return { ok: true, json: async () => ({ token: 'a', city: 'tehran', data: { color: 'سفید', production_year: 1402, images: ['https://example.com/car.jpg'] } }) }
     }
@@ -37,7 +37,7 @@ describe('Divar integration', () => {
 
   it('uses Divar current public web endpoints without an API key', async () => {
     const calls = []
-    const rows = [800, 1000, 1200].map((price, index) => ({ widget_type: 'POST_ROW', data: {
+    const rows = [700, 800, 900, 1000, 1100, 1200, 1300].map((price, index) => ({ widget_type: 'POST_ROW', data: {
       token: `token-${index}`, title: 'پژو ۲۰۷', middle_description_text: `${price} تومان`,
       bottom_description_text: 'لحظاتی پیش در تهران', image_url: 'https://example.com/car.webp',
       action: { payload: { token: `token-${index}`, web_info: { city_persian: 'تهران', district_persian: 'پونک' } } },
@@ -49,7 +49,7 @@ describe('Divar integration', () => {
     }
     const result = await fetchWebListings({ env: { DIVAR_CITY_IDS: '1', DIVAR_WEB_CATEGORY: 'light' }, fetchImpl })
     expect(result.source).toBe('divar-web')
-    expect(result.items[0]).toMatchObject({ price: 800, market: 1000, city: 'تهران، پونک' })
+    expect(result.items[0]).toMatchObject({ price: 700, market: 1000, city: 'تهران، پونک' })
     expect(calls[0].url).toBe('https://api.divar.ir/v8/postlist/w/search')
     const body = JSON.parse(calls[0].options.body)
     expect(body.city_ids).toEqual(['1'])
@@ -75,5 +75,30 @@ describe('Divar integration', () => {
     const second = await service.listings({ city: 'tehran' })
     expect(second.cached).toBe(true)
     expect(requests).toBe(1)
+  })
+})
+
+describe('vehicle year extraction from listing titles', () => {
+  it('extracts full and two-digit years from titles', () => {
+    expect(extractYearFromText('کوییک s مدل 1401 بی رنگ سالم')).toBe(1401)
+    expect(extractYearFromText('پرشیا دو گانه سوز ۹۱ سفید')).toBe(1391)
+    expect(extractYearFromText('پژو ۲۰۷ اتوماتیک مدل ۹۹')).toBe(1399)
+    expect(extractYearFromText('تیبا دو مدل ۱۴۰۰')).toBe(1400)
+    expect(extractYearFromText('سمند LX مدل ۸۵')).toBe(1385)
+    expect(extractYearFromText('اتوماتیک ۱۴۰۳')).toBe(1403)
+  })
+
+  it('does not mistake model numbers or prices for years', () => {
+    expect(extractYearFromText('کوئیک s')).toBe(0)
+    expect(extractYearFromText('پژو ۲۰۷ صفر کیلومتر')).toBe(0)
+    expect(extractYearFromText('سمند فروش فوری')).toBe(0)
+  })
+
+  it('normalizes mixed digit shapes in normalizeVehicleYear', () => {
+    expect(normalizeVehicleYear(1402)).toBe(1402)
+    expect(normalizeVehicleYear('۹۹')).toBe(1399)
+    expect(normalizeVehicleYear('08')).toBe(1408)
+    expect(normalizeVehicleYear(2010)).toBe(0)
+    expect(normalizeVehicleYear(45)).toBe(0)
   })
 })

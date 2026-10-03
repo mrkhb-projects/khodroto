@@ -93,7 +93,17 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  function dealerLeads(userId){return db.prepare('SELECT * FROM dealer_leads WHERE user_id=? ORDER BY id DESC').all(userId)}
  function saveDealerLead(userId,data,id=null){const stamp=now(),values=[String(data.name||'').trim().slice(0,100),String(data.phone||'').slice(0,30),String(data.vehicle||'').slice(0,120),Math.max(0,Number(data.budget)||0),['new','contacted','negotiating','won','lost'].includes(data.status)?data.status:'new',String(data.notes||'').slice(0,1000)];if(values[0].length<2)throw new Error('INVALID_NAME');if(id){const result=db.prepare('UPDATE dealer_leads SET name=?,phone=?,vehicle=?,budget=?,status=?,notes=?,updated_at=? WHERE id=? AND user_id=?').run(...values,stamp,id,userId);if(!result.changes)return null}else db.prepare('INSERT INTO dealer_leads(user_id,name,phone,vehicle,budget,status,notes,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(userId,...values,stamp,stamp);return dealerLeads(userId)}
  function deleteDealerLead(userId,id){return db.prepare('DELETE FROM dealer_leads WHERE id=? AND user_id=?').run(id,userId)}
- return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,
+ function listPayloads(category='light'){
+  return db.prepare("SELECT payload,last_seen_at FROM listings WHERE category=? AND status='active'").all(category)
+   .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
+   .filter(Boolean)
+ }
+ // Cheap freshness signature so higher layers can memoize expensive analysis per category.
+ function listingsSignature(category='light'){
+  const row=db.prepare("SELECT COUNT(*) n,MAX(last_seen_at) m FROM listings WHERE category=? AND status='active'").get(category)
+  return `${row.n}:${row.m||''}`
+ }
+ return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),
