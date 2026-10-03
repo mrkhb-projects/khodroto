@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
-import { CarsPage, DashboardPage, EstimatePage, PricingPage } from './pages'
+import { CarsPage, DashboardPage, EstimatePage, PricingPage, TierBadge } from './pages'
 import { AdminPage } from './admin'
 import { ComparePage } from './compare-page'
 import { DealerPage } from './dealer-page'
@@ -9,6 +9,8 @@ import { comparedCars, isCompared, toggleCompared } from './comparison'
 import { faqItems, InfoPage, infoPaths, NotFoundPage } from './info-pages'
 import { ArrowLeft, ArrowUpLeft, BarChart3, Bell, Check, ChevronDown, ChevronLeft, ChevronRight, Gauge, GitCompareArrows, Heart, Menu, Search, ShieldCheck, SlidersHorizontal, Sparkles, X } from 'lucide-react'
 import { fallbackCars } from './data'
+// One source of truth for the badge, shared with /cars — see src/tiers.js.
+import { cardStyleFor, scoreStyle } from './tiers'
 import './styles.css'
 import './pages.css'
 import './motion.css'
@@ -28,8 +30,7 @@ import './design-system.css'
 
 const toman = n => new Intl.NumberFormat('fa-IR').format(Math.round(n / 1e6))
 const num = n => new Intl.NumberFormat('fa-IR').format(n)
-const scoreStyle = score => ({'--score-color':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},65%,40%)`,'--score-soft':`hsl(${Math.round(Math.max(0,Math.min(100,score||0))*1.25)},70%,94%)`})
-const cardStyleFor=(car,settings={})=>car.suspicious?settings.card_suspicious||'6':car.score>=Number(settings.score_golden_min||85)?settings.card_golden||'1':car.score>=Number(settings.score_good_min||70)?settings.card_good||'2':car.score>=50?settings.card_fair||'4':settings.card_expensive||'5'
+
 const managedLinks=(value,fallback)=>{const items=String(value||'').split('\n').map(line=>line.split('|').map(part=>part.trim())).filter(item=>item[0]&&item[1]);return items.length?items:fallback}
 const tickerItems=value=>String(value||'').split('\n').map(line=>{const[title,subtitle,score]=line.split('|').map(part=>part?.trim());return{title,subtitle,score}}).filter(item=>item.title&&item.subtitle)
 
@@ -76,7 +77,7 @@ function CarCard({car,index,onToast,settings}){const [compared,setCompared]=useS
  function toggleSaved(){const next=!saved;setSaved(next);if(next)localStorage.setItem(storageKey,JSON.stringify(car));else localStorage.removeItem(storageKey);onToast(next?'آگهی در علاقه‌مندی‌ها ذخیره شد.':'آگهی از علاقه‌مندی‌ها حذف شد.')}
  return <article className={`car-card card-style-${cardStyleFor(car,settings)}`}>
  <div className="car-img"><img src={car.image || '/khodroto-hero.jpg'} style={{objectPosition:car.imagePos || 'center'}} alt={car.title}/><span className="time">{car.freshness}</span><button className={saved?'saved':''} onClick={toggleSaved} aria-label={saved?'حذف از ذخیره‌ها':'ذخیره آگهی'}><Heart fill={saved?'currentColor':'none'}/></button></div>
- <div className="car-body"><div className="card-top"><div><span className="place">{car.city}</span><h3>{car.title}</h3></div><div style={scoreStyle(car.score)} className={'score '+(car.suspicious?'suspicious':'')}><b>{num(car.score)}</b><span>{car.suspicious?'مشکوک':car.label||'امتیاز تحلیل'}</span></div></div>
+ <div className="car-body"><div className="card-top"><div><span className="place">{car.city}</span><h3>{car.title}</h3><TierBadge car={car}/></div><div style={scoreStyle(car.score)} className={'score '+(car.suspicious?'suspicious':'')}><b>{car.score==null?'—':num(car.score)}</b><span>{car.suspicious?'مشکوک':car.label||'امتیاز تحلیل'}</span></div></div>
  <div className="specs"><span>{car.year?`مدل ${num(car.year)}`:'سال نامشخص'}</span><i/><span>{car.km?`${num(car.km)} کیلومتر`:'کارکرد نامشخص'}</span><i/><span>{car.color}</span></div>
  <div className="prices"><div><small>قیمت آگهی</small><strong>{car.price?<>{toman(car.price)} <em>میلیون تومان</em></>:(car.priceText||'توافقی')}</strong></div><div><small>ارزش تخمینی بازار</small><del>{toman(car.market)} میلیون</del></div></div>
  <div className="saving"><span><Sparkles/> حدود {toman(car.market-car.price)} میلیون تومان به‌صرفه‌تر</span><b>{num(car.discount)}٪ زیر بازار</b></div>

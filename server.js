@@ -226,7 +226,20 @@ app.post('/api/contact',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now()
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
 app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plan=String(req.body.plan||''),managed=store.plans(true).find(item=>item.id===plan&&item.price>0);if(!managed)return res.status(400).json({error:'INVALID_PLAN'});const gateways=store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority})),requested=Number(req.body.gatewayId),gateway=gateways.find(item=>item.id===requested)||gateways[0]||null;res.json({subscription:store.subscribe(req.user.id,plan,managed.price),mode:gateway||process.env.PAYMENT_GATEWAY?'gateway':'sandbox',gateway,gateways})})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
-app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
+// The stored `score` column is only written during a crawl and is never updated
+// when the baseline is recomputed, so counting golden opportunities from it
+// reported stale numbers — zero on a database filled before tiering existed.
+// Count from the live analysis instead, and fall back to the column if that fails.
+app.get('/api/stats/public',(_req,res)=>{
+ const stats=store.publicStats()
+ try{
+  const entry=marketAnalysis('light')
+  stats.goldenOpportunities=entry.items.filter(item=>!item.hidden&&item.tier==='golden').length
+  stats.visibleListings=entry.items.filter(item=>!item.hidden).length
+  stats.hiddenListings=entry.items.filter(item=>item.hidden).length
+ }catch(error){console.warn(`[stats] ${error.message}`)}
+ res.set('Cache-Control','public, max-age=60');res.json(stats)
+})
 app.get('/api/content/slides',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json({items:store.slides(true)})})
 app.get('/api/catalog/vehicles',(_req,res)=>{res.set('Cache-Control','public, max-age=3600');res.json(publicVehicleCatalog(store.settings()))})
 // --- Location directory -----------------------------------------------------
