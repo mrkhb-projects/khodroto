@@ -12,3 +12,10 @@
 .dealer-stats i{display:block;font-style:normal;font-size:.74rem;margin-top:2px}
 .dealer-stats i.up{color:#2e7d5b}
 .dealer-stats i.down{color:#b3261e}
+.dealer-age{display:inline-flex;flex-direction:column;gap:1px;font-size:.82rem;font-weight:600}
+.dealer-age.stale{color:#b3261e}
+.dealer-age small{font-weight:500;font-size:.72rem;color:#7a818c}
+.dealer-age small.down{color:#b3261e}
+.dealer-age small.up{color:#2e7d5b}
+.dealer-leadcount{font-size:.8rem;font-weight:700;color:#2e7d5b}
+.dealer-leadcount.empty{color:#b9bec7;font-weight:500}

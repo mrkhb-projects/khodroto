@@ -133,3 +133,75 @@ describe('pricing a showroom\u2019s stock against the market', () => {
     expect(verdictFor(null)).toBe('نامشخص')
   })
 })
+
+describe('days in stock and market drift', () => {
+  const M = 1e6
+  beforeEach(() => {
+    store.db.prepare("INSERT INTO users(phone,name,role,created_at) VALUES('09121110000','نمایشگاه','user',datetime('now'))").run()
+  })
+
+  it('freezes what the car was worth on the day it was taken in', () => {
+    // Recomputing this later from today's baseline would quietly rewrite history
+    // and make the drift always read zero.
+    const items = store.saveDealerInventory(1, { title: 'پژو ۲۰۷', buy_price: 880 * M, market_at_add: 950 * M })
+    expect(items[0].market_at_add).toBe(950 * M)
+  })
+
+  it('defaults to zero when no valuation was available', () => {
+    const items = store.saveDealerInventory(1, { title: 'خودروی ناشناخته' })
+    expect(items[0].market_at_add).toBe(0)
+  })
+
+  // The arithmetic the summary endpoint applies on top of the stored snapshot.
+  const drift = (now, atAdd) => atAdd ? Number((((now - atAdd) / atAdd) * 100).toFixed(1)) : null
+  const daysBetween = iso => Math.max(0, Math.floor((Date.now() - Date.parse(iso)) / 86400000))
+
+  it('reports a falling market as a loss against the day of purchase', () => {
+    expect(drift(952, 1020)).toBe(-6.7)
+  })
+
+  it('reports no drift when there was no baseline to compare with', () => {
+    expect(drift(952, 0)).toBeNull()
+  })
+
+  it('counts a car held for sixty days as stale', () => {
+    const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString()
+    const days = daysBetween(sixtyDaysAgo)
+    expect(days).toBe(60)
+    expect(days >= 45).toBe(true)
+  })
+
+  it('does not call a car taken in today stale', () => {
+    expect(daysBetween(new Date().toISOString()) >= 45).toBe(false)
+  })
+})
+
+describe('leads attached to a specific car', () => {
+  beforeEach(() => {
+    store.db.prepare("INSERT INTO users(phone,name,role,created_at) VALUES('09121110000','نمایشگاه','user',datetime('now'))").run()
+    store.db.prepare("INSERT INTO users(phone,name,role,created_at) VALUES('09121110001','رقیب','user',datetime('now'))").run()
+  })
+
+  it('links a buyer to a car in the same showroom', () => {
+    const car = store.saveDealerInventory(1, { title: 'پژو ۲۰۷' })[0]
+    const lead = store.saveDealerLead(1, { name: 'آقای احمدی', inventory_id: car.id })[0]
+    expect(lead.inventory_id).toBe(car.id)
+  })
+
+  it('refuses to link to a car the showroom does not own', () => {
+    const theirs = store.saveDealerInventory(2, { title: 'مال رقیب' })[0]
+    const lead = store.saveDealerLead(1, { name: 'آقای احمدی', inventory_id: theirs.id })[0]
+    expect(lead.inventory_id).toBeNull()
+  })
+
+  it('accepts a lead with no car attached', () => {
+    expect(store.saveDealerLead(1, { name: 'بدون خودرو' })[0].inventory_id).toBeNull()
+  })
+
+  it('keeps the link when the lead is edited', () => {
+    const car = store.saveDealerInventory(1, { title: 'پژو ۲۰۷' })[0]
+    const lead = store.saveDealerLead(1, { name: 'آقای احمدی', inventory_id: car.id })[0]
+    const updated = store.saveDealerLead(1, { name: 'آقای احمدی', status: 'negotiating', inventory_id: car.id }, lead.id)[0]
+    expect(updated).toMatchObject({ status: 'negotiating', inventory_id: car.id })
+  })
+})

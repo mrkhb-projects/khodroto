@@ -529,8 +529,19 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
   // Positive = asking above the market, which is what keeps a car on the forecourt.
   const askGap=target&&market?Number((((target-market)/market)*100).toFixed(1)):null
   const margin=target&&bought?target-bought:null
+  // How long the showroom's money has been parked in this car, and which way the
+  // market has moved since it was taken in. Capital sitting still is the cost a
+  // dealer feels but cannot see.
+  const addedAt=Date.parse(item.created_at||'')
+  const daysInStock=Number.isFinite(addedAt)?Math.max(0,Math.floor((Date.now()-addedAt)/86400000)):null
+  const baseline=Number(item.market_at_add)||0
+  const marketDrift=baseline&&market?Number((((market-baseline)/baseline)*100).toFixed(1)):null
   return{
    ...item,
+   daysInStock,
+   marketDrift,
+   // Negative drift on an old car is the combination that actually loses money.
+   stale:daysInStock!==null&&daysInStock>=45,
    market,
    marketRange:valuation.range,
    marketConfidence:valuation.confidence,
@@ -546,6 +557,19 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
     :'هم‌تراز با بازار',
   }
  })
+
+ // Attach each buyer to the car they asked about, so "who is waiting on this
+ // one?" stops being a memory exercise.
+ const leadsByCar=new Map()
+ for(const lead of leads){
+  if(!lead.inventory_id)continue
+  if(!leadsByCar.has(lead.inventory_id))leadsByCar.set(lead.inventory_id,[])
+  leadsByCar.get(lead.inventory_id).push({id:lead.id,name:lead.name,phone:lead.phone,status:lead.status,budget:lead.budget})
+ }
+ for(const item of priced){
+  item.leads=leadsByCar.get(item.id)||[]
+  item.activeLeads=item.leads.filter(lead=>!['won','lost'].includes(lead.status)).length
+ }
 
  const unsold=priced.filter(item=>item.status!=='sold')
  const investment=unsold.reduce((sum,item)=>sum+(Number(item.buy_price)||0),0)
@@ -567,11 +591,28 @@ app.get('/api/dealer/summary',requireDealer,(req,res)=>{
    marketValue,
    marketVsAsking:expected?Number((((marketValue-expected)/expected)*100).toFixed(1)):null,
    overpricedCount:overpriced.length,
+   staleCount:unsold.filter(item=>item.stale).length,
+   // Money tied up in cars that have been sitting for 45 days or more.
+   stalledCapital:unsold.filter(item=>item.stale).reduce((sum,item)=>sum+(Number(item.buy_price)||0),0),
+   averageDaysInStock:unsold.length?Math.round(unsold.reduce((sum,item)=>sum+(item.daysInStock||0),0)/unsold.length):0,
+   unlinkedLeads:leads.filter(lead=>!lead.inventory_id&&!['won','lost'].includes(lead.status)).length,
   },
   market:store.publicStats(),
  })
 })
-app.post('/api/dealer/inventory',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerInventory(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
+app.post('/api/dealer/inventory',requireDealer,(req,res)=>{
+ try{
+  // Freeze what the car is worth today. Recomputing it later from the current
+  // baseline would silently rewrite history and make drift always read zero.
+  let marketAtAdd=0
+  try{
+   const valuation=estimateValue({title:req.body?.title,brand:req.body?.brand,model:req.body?.model,year:req.body?.year,category:'light'},
+    {priceIndex:marketAnalysis('light').priceIndex,reference:referenceIndex})
+   if(valuation.ok)marketAtAdd=valuation.estimate
+  }catch{}
+  res.status(201).json({items:store.saveDealerInventory(req.user.id,{...req.body,market_at_add:marketAtAdd})})
+ }catch{res.status(400).json({error:'INVALID_INVENTORY'})}
+})
 app.patch('/api/dealer/inventory/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerInventory(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
 app.delete('/api/dealer/inventory/:id',requireDealer,(req,res)=>{store.deleteDealerInventory(req.user.id,Number(req.params.id));res.json({ok:true})})
 app.post('/api/dealer/leads',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerLead(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
