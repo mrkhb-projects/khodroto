@@ -1,0 +1,75 @@
+{
+  "note": "منابع قیمت مرجع به‌صورت داده تعریف می‌شوند. افزودن منبع جدید = یک ورودی اینجا، بدون نوشتن کد. هر منبع مستقل است و اگر ساختار سایتش عوض شود فقط خودش خاموش می‌شود.",
+  "sources": [
+    {
+      "key": "paye1",
+      "name": "پایه یک",
+      "segment": "heavy",
+      "categoryHint": "heavy",
+      "kind": "used",
+      "mode": "table",
+      "url": "https://paye1.com/price/",
+      "scopeStart": "قیمت روز",
+      "minPrice": 300000000,
+      "maxPrice": 100000000000,
+      "enabledEnv": "REF_PAYE1_ENABLED",
+      "about": "قیمت روز کامیون، کشنده و ماشین‌آلات سنگین؛ جدول مدل/سال/قیمت با نوسان روزانه"
+    },
+    {
+      "key": "otobantruck",
+      "name": "اتوبان",
+      "segment": "heavy",
+      "categoryHint": "heavy",
+      "kind": "used",
+      "mode": "block",
+      "url": "https://otobantruck.com/price",
+      "scopeStart": "قیمت روز",
+      "minPrice": 300000000,
+      "maxPrice": 100000000000,
+      "enabledEnv": "REF_OTOBAN_ENABLED",
+      "about": "«قیمت منصفانه بازار» برای کشنده، کامیون، کامیونت و تریلر"
+    },
+    {
+      "key": "asbe-bokhar-moto",
+      "name": "اسب بخار (موتورسیکلت)",
+      "segment": "motorcycle",
+      "categoryHint": "motorcycles",
+      "kind": "new",
+      "mode": "table",
+      "urls": [
+        "https://asbe-bokhar.com/article/news/motorcycle-prices/",
+        "https://asbe-bokhar.com/article/motorcycle/honda-motorcycle-prices/"
+      ],
+      "minPrice": 20000000,
+      "maxPrice": 10000000000,
+      "enabledEnv": "REF_ASBEBOKHAR_ENABLED",
+      "about": "جدول قیمت موتورسیکلت به تفکیک برند (هوندا، باجاج، کبیر، همتاز…)"
+    },
+    {
+      "key": "khodro45-moto",
+      "name": "خودرو ۴۵ (موتورسیکلت)",
+      "segment": "motorcycle",
+      "categoryHint": "motorcycles",
+      "kind": "new",
+      "mode": "table",
+      "url": "https://khodro45.com/mag/motorcycle-price/",
+      "minPrice": 20000000,
+      "maxPrice": 10000000000,
+      "enabledEnv": "REF_KHODRO45MOTO_ENABLED",
+      "about": "قیمت موتورسیکلت باجاج، هوندا، یاماها، کویر، بنلی، پیشرو با سال مدل"
+    },
+    {
+      "key": "padidehkhodro",
+      "name": "پدیده خودرو",
+      "segment": "light",
+      "categoryHint": "light",
+      "kind": "new",
+      "mode": "table",
+      "url": "https://padidehkhodro.com/قیمت-روز-خودرو-صفر/",
+      "minPrice": 200000000,
+      "maxPrice": 50000000000,
+      "enabledEnv": "REF_PADIDEH_ENABLED",
+      "about": "قیمت روز خودرو صفر سایپا و پارس‌خودرو بر مبنای معاملات روزانه"
+    }
+  ]
+}

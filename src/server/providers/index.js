@@ -1,10 +1,13 @@
 import { bamaListings } from './bama.js'
 import { sheypoorListings } from './sheypoor.js'
 import { ringListings } from './ring.js'
+import { khodro45Listings } from './khodro45.js'
+import { hamrahMechanicListings } from './hamrahmechanic.js'
 
 // Registry of every market source beyond Divar. All are OFF unless explicitly enabled
 // with environment variables, so the proven Divar flow stays the default everywhere.
-//   BAMA_ENABLED=true  ·  SHEYPOOR_ENABLED=true  ·  RING_ENABLED=true
+//   BAMA_ENABLED=true · SHEYPOOR_ENABLED=true · RING_ENABLED=true
+//   KHODRO45_ENABLED=true · HAMRAH_LISTINGS_ENABLED=true
 const PROVIDERS = {
   bama: {
     name: 'باما',
@@ -24,7 +27,23 @@ const PROVIDERS = {
     categories: ['light'],
     fetch: ringListings,
   },
+  khodro45: {
+    name: 'خودرو ۴۵',
+    enabled: () => process.env.KHODRO45_ENABLED === 'true',
+    categories: ['light', 'motorcycles'],
+    fetch: khodro45Listings,
+  },
+  hamrahmechanic: {
+    name: 'همراه مکانیک',
+    enabled: () => process.env.HAMRAH_LISTINGS_ENABLED === 'true',
+    categories: ['light'],
+    fetch: hamrahMechanicListings,
+  },
 }
+
+export const providerCatalogue = () => Object.entries(PROVIDERS).map(([key, provider]) => ({
+  key, name: provider.name, categories: provider.categories, enabled: provider.enabled(),
+}))
 
 const status = new Map() // provider → {ok, items, note, lastRun}
 

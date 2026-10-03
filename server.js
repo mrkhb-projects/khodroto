@@ -6,14 +6,55 @@ import { createDivarService, discoverDivarVehicleCatalog, DivarUpstreamError } f
 import { publicVehicleCatalog } from './src/server/catalog.js'
 import { createDatabase } from './src/server/database.js'
 import { canViewRiskInsights, listingForViewer } from './src/server/access.js'
-import { analyzeListings, filterListingItems, summarizeMarket } from './src/server/analyzer.js'
+import { analyzeListings, filterListingItems, summarizeMarket, buildPriceIndex, exportBaseline, DEFAULT_WINDOW_DAYS } from './src/server/analyzer.js'
+import { provinces, citiesOf, groupedCities, nearestCity, resolveCity } from './src/server/locations.js'
+import { collectReferencePrices, buildReferenceIndex, referenceStatuses, sourceCatalogue } from './src/server/reference/index.js'
+import { providerCatalogue } from './src/server/providers/index.js'
+import { dedupeListings } from './src/server/dedupe.js'
+import { estimateValue } from './src/server/estimate.js'
+import { dispatchAlerts } from './src/server/alerts.js'
+import { buildModelPages, renderModelPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
+import fs from 'node:fs'
 import { collectExternalListings, providerStatuses } from './src/server/providers/index.js'
 
+let referenceIndex = buildReferenceIndex([])
 const app = express()
+
+// Lightweight IP rate limiter for the public read APIs. Without it a single
+// client can pull the whole database in a loop.
+const rateBuckets = new Map()
+function rateLimit({ windowMs = 60_000, max = 120 } = {}) {
+  return (req, res, next) => {
+    if (process.env.RATE_LIMIT_DISABLED === 'true') return next()
+    const key = `${req.ip}|${req.path}`
+    const now = Date.now()
+    const bucket = rateBuckets.get(key)
+    if (!bucket || now > bucket.resetAt) {
+      rateBuckets.set(key, { count: 1, resetAt: now + windowMs })
+      return next()
+    }
+    bucket.count += 1
+    if (bucket.count > max) {
+      res.set('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)))
+      return res.status(429).json({ error: 'RATE_LIMITED', message: 'تعداد درخواست‌ها بیش از حد مجاز است؛ کمی بعد دوباره تلاش کنید.' })
+    }
+    return next()
+  }
+}
+// Keep the bucket map from growing without bound.
+setInterval(() => { const now = Date.now(); for (const [key, bucket] of rateBuckets) if (now > bucket.resetAt) rateBuckets.delete(key) }, 120_000).unref()
 const PORT = process.env.PORT || 5173
 const cacheTtl = Math.max(5, Number(process.env.DIVAR_CACHE_TTL_MINUTES) || 10) * 60 * 1000
-const divar = createDivarService({ cacheTtlMs: cacheTtl, cacheFile: process.env.DIVAR_CACHE_FILE || 'data/divar-cache.json' })
 const store = createDatabase()
+// detailCache makes colour/mileage enrichment cumulative across crawl cycles;
+// getReference lets the crawl screen bait prices the moment they arrive.
+const divar = createDivarService({
+  cacheTtlMs: cacheTtl,
+  cacheFile: process.env.DIVAR_CACHE_FILE || 'data/divar-cache.json',
+  detailCache: store.detailCache,
+  getReference: () => referenceIndex,
+  getKnownTokens: category => { try { return store.knownTokens(category || 'light') } catch { return null } },
+})
 const cookieToken=req=>Object.fromEntries(String(req.headers.cookie||'').split(';').map(x=>x.trim().split('='))).khodroto_session
 const requireUser=(req,res,next)=>{const user=store.userFromToken(cookieToken(req));if(!user)return res.status(401).json({error:'AUTH_REQUIRED'});req.user=user;next()}
 const adminPreview=process.env.ADMIN_PREVIEW==='true'&&process.env.NODE_ENV!=='production'
@@ -69,7 +110,12 @@ async function refreshConfiguredMarket(){
       total+=result.items.length;scopes++
     }
   }
-  return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length}
+  // The crawl is only half the job: once fresh listings are stored we immediately
+  // recompute the 30-day averages, so the site never scores against stale baselines.
+  const baseline=rebuildMarketBaseline()
+  // Fire-and-forget: a failing SMS provider must never break the crawl.
+  runAlerts().catch(error=>console.warn(`[alerts] ${error.message}`))
+  return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length,baseline}
  }finally{marketRefreshRunning=false}
 }
 
@@ -132,6 +178,194 @@ app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHist
 app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
 app.get('/api/content/slides',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json({items:store.slides(true)})})
 app.get('/api/catalog/vehicles',(_req,res)=>{res.set('Cache-Control','public, max-age=3600');res.json(publicVehicleCatalog(store.settings()))})
+// --- Location directory -----------------------------------------------------
+// Province-first selection: the user picks an استان, then a شهر. Both lists are
+// curated and deduplicated, so «کل ایران» appears exactly once and never as a city.
+app.get('/api/locations/provinces',(_req,res)=>{res.set('Cache-Control','public, max-age=86400');res.json({provinces:provinces()})})
+app.get('/api/locations/cities',(req,res)=>{
+ res.set('Cache-Control','public, max-age=86400')
+ const province=String(req.query.province||'')
+ res.json(province?{province,cities:citiesOf(province)}:{groups:groupedCities()})
+})
+// Browser geolocation → nearest supported city, so the site can open on the user's
+// own market instead of defaulting everyone to Tehran.
+app.get('/api/locations/resolve',(req,res)=>{
+ const match=nearestCity(req.query.lat,req.query.lng)
+ if(!match)return res.status(404).json({error:'OUT_OF_COVERAGE',message:'شهری در نزدیکی موقعیت شما پشتیبانی نمی‌شود؛ «کل ایران» انتخاب می‌ماند.'})
+ res.json({city:match})
+})
+// Stored per-model / per-year / per-colour averages (the pricing knowledge base).
+app.get('/api/market/baseline',(req,res)=>{
+ const category=['light','motorcycles','heavy'].includes(String(req.query.category))?String(req.query.category):'light'
+ const limit=Math.min(1000,Math.max(1,Number(req.query.limit)||200))
+ res.set('Cache-Control','public, max-age=300')
+ res.json({category,meta:store.baselineMeta(category),rows:store.baselineRows(category,limit)})
+})
+app.post('/api/admin/market/rebuild',adminOnly,(req,res)=>{
+ try{const result=rebuildMarketBaseline();store.audit(req.user.id,'rebuild','market_baseline','all',{categories:result.length});res.json({ok:true,result})}
+ catch(error){res.status(500).json({error:'BASELINE_REBUILD_FAILED',message:error.message})}
+})
+// Reference prices gathered from Iranian daily price authorities.
+app.get('/api/market/reference',(req,res)=>{
+ const limit=Math.min(5000,Math.max(1,Number(req.query.limit)||500))
+ res.set('Cache-Control','public, max-age=120')
+ res.json({meta:store.referenceMeta(),sources:referenceStatuses(),runs:store.referenceRuns(10),rows:store.referencePrices(limit)})
+})
+app.post('/api/admin/market/reference/refresh',adminOnly,async(req,res)=>{
+ try{const result=await refreshReferencePrices();store.audit(req.user.id,'refresh','reference_prices','all',{rows:result.rows});res.json({ok:true,...result})}
+ catch(error){res.status(502).json({error:'REFERENCE_REFRESH_FAILED',message:error.message})}
+})
+// --- Alert delivery ---------------------------------------------------------
+// Saved alerts used to do nothing at all. Now every crawl cycle matches fresh,
+// trusted opportunities against them and hands the message to the SMS provider.
+async function sendAlertSms({ phone, text }) {
+ const [provider] = store.activeIntegrations('sms')
+ if (!provider || !provider.secret) return false
+ const endpoint = provider.config?.endpoint
+ if (!endpoint) return false
+ try {
+  const response = await fetch(endpoint, {
+   method: 'POST',
+   headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.secret}` },
+   body: JSON.stringify({ to: phone, text, from: provider.config?.sender || undefined }),
+  })
+  return response.ok
+ } catch { return false }
+}
+
+export async function runAlerts() {
+ try {
+  const result = await dispatchAlerts({
+   store,
+   itemsFor: category => { try { return marketAnalysis(category).items } catch { return [] } },
+   sendSms: sendAlertSms,
+  })
+  if (result.matched) console.log(`[alerts] ${result.matched} matches · ${result.sent} sent · ${result.queued} queued`)
+  return result
+ } catch (error) { console.warn(`[alerts] ${error.message}`); return { error: error.message } }
+}
+
+app.get('/api/alerts/history', requireUser, (req, res) => res.json({ items: store.alertHistory(req.user.id) }))
+app.post('/api/admin/alerts/run', adminOnly, async (req, res) => {
+ const result = await runAlerts()
+ store.audit(req.user.id, 'run', 'alerts', 'manual', result)
+ res.json({ ok: !result.error, ...result })
+})
+
+// --- SEO: a real, crawlable page per vehicle model --------------------------
+// The data for «قیمت پراید ۱۳۱» already exists in market_baseline; before this it
+// was invisible to search engines because every URL returned the same empty SPA
+// shell. These routes render the numbers server-side.
+const SEO_CATEGORIES = ['light', 'heavy', 'motorcycles']
+const seoCache = { at: 0, pages: [], bySlug: new Map() }
+
+function seoPages() {
+ if (Date.now() - seoCache.at < 10 * 60 * 1000 && seoCache.pages.length) return seoCache
+ const pages = []
+ for (const category of SEO_CATEGORIES) {
+  try { pages.push(...buildModelPages(store.baselineRows(category, 1000), { category })) } catch {}
+ }
+ seoCache.at = Date.now()
+ seoCache.pages = pages
+ seoCache.bySlug = new Map(pages.map(page => [page.slug, page]))
+ return seoCache
+}
+const siteOrigin = () => (process.env.SITE_ORIGIN || 'https://bidup.ir').replace(/\/$/, '')
+
+app.get('/price/:slug', rateLimit({ max: 120 }), (req, res, next) => {
+ const { bySlug } = seoPages()
+ const page = bySlug.get(slugify(decodeURIComponent(req.params.slug)))
+ if (!page) return next()
+ let shell
+ try { shell = fs.readFileSync(path.join(dist, 'index.html'), 'utf8') } catch { return next() }
+ res.set('Cache-Control', 'public, max-age=600')
+ res.type('html').send(renderModelPage(shell, page, { origin: siteOrigin() }))
+})
+
+// Machine-readable index of every model page, handy for debugging and for the UI.
+app.get('/api/seo/models', rateLimit({ max: 30 }), (_req, res) => {
+ const { pages } = seoPages()
+ res.json({ count: pages.length, items: pages.map(page => ({ slug: page.slug, label: page.label, category: page.category, samples: page.overall.samples, median: page.overall.median, years: page.years.length })) })
+})
+
+app.get('/sitemap.xml', (_req, res) => {
+ const { pages } = seoPages()
+ res.set('Cache-Control', 'public, max-age=3600').type('application/xml')
+ res.send(renderSitemap(pages, { origin: siteOrigin(), staticPaths: ['/', '/cars', '/compare', '/methodology', '/pricing', '/faq', '/about'] }))
+})
+
+app.get('/robots.txt', (_req, res) => {
+ const allow = store.settings().robots_index !== 'false'
+ res.set('Cache-Control', 'public, max-age=3600').type('text/plain')
+ res.send(renderRobots({ origin: siteOrigin(), allow }))
+})
+
+// --- Platform health --------------------------------------------------------
+// One place that answers "is the pipeline actually working?" — previously you had
+// to read raw JSON from several endpoints to find out the crawler was failing.
+app.get('/api/health', rateLimit({ max: 60 }), (_req, res) => {
+ const integration = divar.status()
+ const categories = ['light', 'heavy', 'motorcycles'].map(category => {
+  const meta = store.baselineMeta(category)
+  let cohorts = 0, priced = 0, total = 0
+  try {
+   const analysis = marketAnalysis(category)
+   total = analysis.items.length
+   priced = analysis.items.filter(item => item.market > 0).length
+   cohorts = analysis.summary.totalModels
+  } catch {}
+  return { category, listings: total, priced, pricedPercent: total ? Math.round((priced / total) * 100) : 0, cohorts, baselineRows: meta?.rows || 0, baselineAt: meta?.generated_at || null }
+ })
+ const detail = store.detailCache.stats()
+ const reference = store.referenceMeta()
+ const problems = []
+ if (integration.lastError) problems.push({ level: 'error', area: 'crawler', message: integration.lastError.message, at: integration.lastError.at })
+ if (!reference?.rows) problems.push({ level: 'warn', area: 'reference', message: 'هیچ قیمت مرجعی ذخیره نشده؛ تشخیص آگهی فیک ضعیف می‌شود.' })
+ for (const entry of categories) {
+  if (!entry.listings) problems.push({ level: 'error', area: `listings:${entry.category}`, message: `هیچ آگهی‌ای برای دستهٔ ${entry.category} ذخیره نشده است.` })
+  else if (entry.pricedPercent < 40) problems.push({ level: 'warn', area: `pricing:${entry.category}`, message: `فقط ${entry.pricedPercent}٪ آگهی‌های این دسته قیمت‌گذاری شده‌اند.` })
+ }
+ if (detail?.total && detail.with_color / detail.total < 0.2) problems.push({ level: 'warn', area: 'enrichment', message: 'پوشش رنگ کمتر از ۲۰٪ است؛ میانگین بر اساس رنگ قابل اتکا نیست.' })
+ res.json({
+  ok: problems.every(problem => problem.level !== 'error'),
+  checkedAt: new Date().toISOString(),
+  integration: { provider: integration.provider, connected: integration.connected, lastSuccessAt: integration.lastSuccessAt, lastError: integration.lastError || null },
+  categories,
+  enrichment: { cachedDetails: detail?.total || 0, withColor: detail?.with_color || 0, withKm: detail?.with_km || 0, colorPercent: detail?.total ? Math.round((detail.with_color / detail.total) * 100) : 0 },
+  reference: { ...reference, sources: referenceStatuses() },
+  sources: { listings: providerCatalogue(), reference: sourceCatalogue() },
+  windowDays: MARKET_WINDOW_DAYS,
+  problems,
+ })
+})
+
+// --- Value my car -----------------------------------------------------------
+app.get('/api/market/estimate', rateLimit({ max: 60 }), (req, res) => {
+ const category = ['light', 'motorcycles', 'heavy'].includes(String(req.query.category)) ? String(req.query.category) : 'light'
+ let priceIndex = null
+ try { priceIndex = marketAnalysis(category).priceIndex } catch {}
+ const result = estimateValue({
+  title: req.query.title, brand: req.query.brand, model: req.query.model,
+  year: req.query.year, km: req.query.km, color: req.query.color, body: req.query.body, category,
+ }, { priceIndex, reference: referenceIndex })
+ res.set('Cache-Control', 'public, max-age=120')
+ res.status(result.ok ? 200 : 404).json(result)
+})
+
+// --- Price trend for one cohort ---------------------------------------------
+app.get('/api/market/trend', rateLimit({ max: 60 }), (req, res) => {
+ const category = ['light', 'motorcycles', 'heavy'].includes(String(req.query.category)) ? String(req.query.category) : 'light'
+ const cohortKey = String(req.query.cohort || '')
+ if (!cohortKey) return res.status(400).json({ error: 'COHORT_REQUIRED' })
+ const points = store.baselineTrend(category, cohortKey, { year: req.query.year || 0, color: req.query.color || '', days: Math.min(365, Number(req.query.days) || 90) })
+ res.json({ category, cohortKey, points })
+})
+
+// --- Dealers whose prices do not hold up ------------------------------------
+app.get('/api/market/sellers', rateLimit({ max: 30 }), (_req, res) => {
+ res.json({ items: store.worstSellers(25) })
+})
+
 app.get('/api/plans',(_req,res)=>res.json({items:store.plans(true)}))
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site_name','site_tagline','support_phone','support_email','maintenance_mode','card_golden','card_good','card_fair','card_expensive','card_suspicious','mobile_listing_mode','hero_ticker','hero_title','hero_description','section_slider','section_search','section_opportunities','section_campaign','section_method','section_score','section_faq','feature_comparison','feature_alerts','feature_pricing','score_golden_min','score_good_min','vehicle_categories','vehicle_brands','supported_cities','vehicle_colors','default_city','default_sort','enable_motorcycles','enable_heavy_vehicles','faq_content','faq_enabled','faq_home_count','header_links','footer_platform_links','footer_help_links','footer_description','copyright_text','public_font_scale','show_announcement','enable_motion','campaign_enabled','campaign_title','campaign_description','campaign_discount','campaign_cta','seo_title','seo_description','og_title','og_description','og_image'];res.json(Object.fromEntries(keys.map(key=>[key,s[key]])))})
@@ -179,18 +413,103 @@ app.get('/api/integration/status', (_req, res) => {
 
 // Re-score stored listings against the current market picture (per model/year/color
 // averages) and memoize per database signature so repeat searches stay instant.
+// --- Reference prices -------------------------------------------------------
+// Daily market valuations from Iranian price authorities (همراه مکانیک، بازارخودرو).
+// They are the independent yardstick the fraud screen uses, so a wall of fake
+// «کوییک ۵۸۰ میلیون» ads can never redefine what a Quick is worth.
+// (declared near the top so createDivarService can close over it)
+function loadReferenceFromStore(){
+ try{
+  const rows=store.referencePrices()
+  referenceIndex=buildReferenceIndex(rows)
+  if(rows.length)console.log(`[reference] loaded ${rows.length} prices for ${referenceIndex.cohorts} models from cache`)
+ }catch(error){console.warn(`[reference:load] ${error.message}`)}
+ return referenceIndex
+}
+export async function refreshReferencePrices(){
+ const {rows,report}=await collectReferencePrices()
+ for(const entry of report){
+  try{store.logReferenceRun(entry)}catch{}
+  console.log(`[reference] ${entry.key}: ${entry.ok?`${entry.rows} prices`:`FAILED — ${entry.note}`} (${entry.ms}ms)`)
+ }
+ const bySource=new Map()
+ for(const row of rows){if(!bySource.has(row.source))bySource.set(row.source,[]);bySource.get(row.source).push(row)}
+ for(const [source,sourceRows] of bySource){
+  try{store.replaceReferencePrices(source,sourceRows)}catch(error){console.warn(`[reference:save] ${source}: ${error.message}`)}
+ }
+ loadReferenceFromStore()
+ marketAnalysisCache.clear()
+ return{rows:rows.length,models:referenceIndex.cohorts,report}
+}
+
 const marketAnalysisCache=new Map()
+const MARKET_WINDOW_DAYS=Math.max(7,Number(process.env.MARKET_WINDOW_DAYS)||DEFAULT_WINDOW_DAYS)
+
 function marketAnalysis(category){
  const signature=store.listingsSignature(category)
  const cached=marketAnalysisCache.get(category)
  if(cached&&cached.signature===signature&&Date.now()-cached.stamp<120000)return cached
- const payloads=store.listPayloads(category)
- const items=analyzeListings(payloads,{category,includeNoPhoto:true}).items
- const summary=summarizeMarket(payloads,{minSamples:4})
+ // Step 1 — take ONLY the listings observed in the rolling window (default 30 days),
+ // then collapse the same car posted on several sites so one dealer cannot weight
+ // their own asking price two or three times.
+ const raw=store.recentPayloads(category,MARKET_WINDOW_DAYS)
+ const {items:payloads,stats:dedupeStats}=dedupeListings(raw,{categoryHint:category})
+ if(dedupeStats.removed)console.log(`[dedupe] ${category}: merged ${dedupeStats.removed} duplicate listings (${dedupeStats.input} → ${dedupeStats.output})`)
+ // Step 2 — build one price index and reuse it for both scoring and the summary,
+ // so a listing is always judged against exactly the averages we publish.
+ const priceIndex=buildPriceIndex(payloads,{categoryHint:category,windowDays:MARKET_WINDOW_DAYS,reference:referenceIndex})
+ const analysis=analyzeListings(payloads,{category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,priceIndex,reference:referenceIndex})
+ const items=analysis.items
+ if(priceIndex.stats?.rejected||priceIndex.stats?.review)console.log(`[screen] ${category}: ${priceIndex.stats.rejected} rejected, ${priceIndex.stats.review} needs-review of ${priceIndex.stats.screened} listings`)
+ const summary=summarizeMarket(payloads,{category,windowDays:MARKET_WINDOW_DAYS})
  const byModel=new Map(summary.models.map(model=>[model.model,model]))
- const entry={signature,stamp:Date.now(),items,summary,byModel}
+ const entry={signature,stamp:Date.now(),items,summary,byModel,priceIndex,dedupe:dedupeStats}
+ try{recordSellerReputation(items)}catch(error){console.warn(`[sellers] ${error.message}`)}
  marketAnalysisCache.set(category,entry)
  return entry
+}
+
+// Aggregate how trustworthy each seller's prices are. A dealer whose listings are
+// repeatedly rejected by the fraud screen becomes visible instead of anonymous.
+function recordSellerReputation(items){
+ const buckets=new Map()
+ for(const item of items){
+  const key=item.sellerKey||item.source||(item.freshness==='نمایشگاه'?`dealer:${item.city||'?'}`:null)
+  if(!key)continue
+  if(!buckets.has(key))buckets.set(key,{key,label:item.source||item.city||key,listings:0,rejected:0,review:0,ratios:[]})
+  const bucket=buckets.get(key)
+  bucket.listings+=1
+  if(item.trust==='reject')bucket.rejected+=1
+  else if(item.trust==='review')bucket.review+=1
+  if(item.referenceRatio)bucket.ratios.push(item.referenceRatio)
+ }
+ const rows=[...buckets.values()].filter(bucket=>bucket.listings>=3).map(bucket=>({
+  ...bucket,
+  avgRatio:bucket.ratios.length?Number((bucket.ratios.reduce((sum,value)=>sum+value,0)/bucket.ratios.length).toFixed(3)):null,
+ }))
+ if(rows.length)store.recordSellerStats(rows)
+ return rows.length
+}
+
+// Step 3 — persist the averages per model / build year / colour so they survive a
+// restart, can be inspected, and can be served without recomputing.
+const BASELINE_CATEGORIES=['light','heavy','motorcycles']
+export function rebuildMarketBaseline(categories=BASELINE_CATEGORIES){
+ const results=[]
+ for(const category of categories){
+  try{
+   const payloads=store.recentPayloads(category,MARKET_WINDOW_DAYS)
+   const index=buildPriceIndex(payloads,{categoryHint:category,windowDays:MARKET_WINDOW_DAYS,reference:referenceIndex})
+   const baseline=exportBaseline(index,{category})
+   const saved=store.replaceBaseline(category,baseline.rows,{windowDays:MARKET_WINDOW_DAYS,generatedAt:baseline.generatedAt})
+   // One immutable snapshot per day so the platform can draw a price trend.
+   try{store.snapshotBaseline(category,baseline.rows)}catch(error){console.warn(`[trend] ${category}: ${error.message}`)}
+   marketAnalysisCache.delete(category)
+   console.log(`[baseline] ${category}: ${saved.rows} cohorts from ${index.stats.considered} listings (${MARKET_WINDOW_DAYS}d window)`)
+   results.push({category,...saved,coverage:index.stats})
+  }catch(error){console.warn(`[baseline] ${category} failed: ${error.message}`);results.push({category,error:error.message})}
+ }
+ return results
 }
 
 // When results clearly belong to one vehicle model, attach that model's pricing
@@ -205,7 +524,7 @@ function marketIntelFor(items,entry){
  if(!row)return null
  const years=new Set(items.map(item=>Number(item.year)||0).filter(Boolean))
  const byYear=years.size===1?row.byYear.find(year=>year.year===[...years][0]):null
- return{model:modelKey,total:row.samples,avg:row.avg,median:row.median,min:row.min,max:row.max,yearFocus:byYear?{year:byYear.year,samples:byYear.samples,avg:byYear.avg,median:byYear.median}:null}
+ return{model:modelKey,cohortKey:row.cohortKey,total:row.samples,avg:row.avg,median:row.median,min:row.min,max:row.max,yearFocus:byYear?{year:byYear.year,samples:byYear.samples,avg:byYear.avg,median:byYear.median}:null}
 }
 
 app.get('/api/market/models',(req,res)=>{
@@ -218,7 +537,7 @@ app.get('/api/market/models',(req,res)=>{
  }catch(error){res.status(500).json({error:'MARKET_STATS_FAILED',message:error.message})}
 })
 
-app.get('/api/listings', async (req, res) => {
+app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
   const viewer=store.userFromToken(cookieToken(req)),subscription=viewer?store.subscription(viewer.id):null
   const canViewRisk=canViewRiskInsights(viewer,subscription)
   const publicListing=item=>listingForViewer(item,canViewRisk)
@@ -264,6 +583,18 @@ app.get('/api/listings', async (req, res) => {
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
 const warmMarketCache = () => refreshConfiguredMarket().then(result=>console.log(`[divar] refreshed ${result.total} listings across ${result.cities||0} cities and ${result.scopes||0} categories`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+loadReferenceFromStore()
+try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
+
+// Reference sources publish a few times a day, so polling every couple of minutes
+// would only burn their bandwidth and risk a block. 15 minutes keeps us current
+// within one update cycle while staying a polite citizen.
+const referenceIntervalMs=Math.max(5,Number(process.env.REFERENCE_REFRESH_MINUTES)||15)*60*1000
+const warmReference=()=>refreshReferencePrices()
+ .then(result=>console.log(`[reference] refreshed ${result.rows} prices across ${result.models} models`))
+ .catch(error=>console.warn(`[reference:warmup] ${error.message}`))
+if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
+
 warmMarketCache()
 setInterval(warmMarketCache, cacheTtl).unref()
 

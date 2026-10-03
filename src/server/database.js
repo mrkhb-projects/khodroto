@@ -25,6 +25,17 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  CREATE TABLE IF NOT EXISTS audit_logs(id INTEGER PRIMARY KEY,admin_id INTEGER,action TEXT NOT NULL,entity TEXT NOT NULL,entity_id TEXT,details TEXT,created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS dealer_inventory(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,title TEXT NOT NULL,brand TEXT,model TEXT,year INTEGER,buy_price INTEGER DEFAULT 0,target_price INTEGER DEFAULT 0,status TEXT DEFAULT 'available',notes TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS dealer_leads(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,name TEXT NOT NULL,phone TEXT,vehicle TEXT,budget INTEGER DEFAULT 0,status TEXT DEFAULT 'new',notes TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
+ CREATE TABLE IF NOT EXISTS alert_deliveries(id INTEGER PRIMARY KEY,alert_id INTEGER NOT NULL,user_id INTEGER,listing_id TEXT NOT NULL,message TEXT,status TEXT DEFAULT 'queued',created_at TEXT NOT NULL,UNIQUE(alert_id,listing_id));
+ CREATE INDEX IF NOT EXISTS idx_alert_deliveries ON alert_deliveries(alert_id,created_at);
+ CREATE TABLE IF NOT EXISTS seller_reputation(seller_key TEXT PRIMARY KEY,label TEXT,listings INTEGER DEFAULT 0,rejected INTEGER DEFAULT 0,review INTEGER DEFAULT 0,avg_reference_ratio REAL,updated_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS baseline_history(id INTEGER PRIMARY KEY,category TEXT NOT NULL,cohort_key TEXT NOT NULL,year INTEGER DEFAULT 0,color TEXT DEFAULT '',samples INTEGER,median INTEGER,avg INTEGER,captured_on TEXT NOT NULL,UNIQUE(category,cohort_key,year,color,captured_on));
+ CREATE INDEX IF NOT EXISTS idx_baseline_history ON baseline_history(category,cohort_key,captured_on);
+ CREATE TABLE IF NOT EXISTS listing_details(token TEXT PRIMARY KEY,color TEXT,km INTEGER DEFAULT 0,year INTEGER DEFAULT 0,fetched_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS reference_prices(source TEXT NOT NULL,cohort_key TEXT NOT NULL,year INTEGER NOT NULL,brand TEXT,model TEXT,trim TEXT,label TEXT,price INTEGER NOT NULL,condition TEXT,url TEXT,fetched_at TEXT NOT NULL,PRIMARY KEY(source,cohort_key,year,trim));
+ CREATE INDEX IF NOT EXISTS idx_reference_lookup ON reference_prices(cohort_key,year);
+ CREATE TABLE IF NOT EXISTS reference_runs(id INTEGER PRIMARY KEY,source TEXT NOT NULL,ok INTEGER DEFAULT 0,rows INTEGER DEFAULT 0,raw INTEGER DEFAULT 0,note TEXT,ms INTEGER,created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS market_baseline(category TEXT NOT NULL,cohort_key TEXT NOT NULL,year INTEGER NOT NULL DEFAULT 0,color TEXT NOT NULL DEFAULT '',segment TEXT,vehicle_type TEXT,brand TEXT,model TEXT,label TEXT,samples INTEGER NOT NULL,avg INTEGER NOT NULL,median INTEGER NOT NULL,p25 INTEGER,p75 INTEGER,min INTEGER,max INTEGER,mad INTEGER,dispersion REAL,window_days INTEGER,generated_at TEXT NOT NULL,PRIMARY KEY(category,cohort_key,year,color));
+ CREATE INDEX IF NOT EXISTS idx_baseline_lookup ON market_baseline(category,cohort_key,year,color);
  CREATE TABLE IF NOT EXISTS subscription_plans(id TEXT PRIMARY KEY,name TEXT NOT NULL,price INTEGER DEFAULT 0,description TEXT,features TEXT DEFAULT '[]',enabled INTEGER DEFAULT 1,popular INTEGER DEFAULT 0,sort_order INTEGER DEFAULT 100,updated_at TEXT NOT NULL);`)
  const listingColumns=new Set(db.prepare('PRAGMA table_info(listings)').all().map(column=>column.name));
  const listingMigrations={category:"TEXT DEFAULT 'light'",crawl_scope:"TEXT DEFAULT 'web:light:1'",status:"TEXT DEFAULT 'active'",missing_count:'INTEGER DEFAULT 0',last_verified_at:'TEXT',inactive_at:'TEXT',removed_at:'TEXT'};
@@ -103,7 +114,123 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
   const row=db.prepare("SELECT COUNT(*) n,MAX(last_seen_at) m FROM listings WHERE category=? AND status='active'").get(category)
   return `${row.n}:${row.m||''}`
  }
- return{db,storeListings,storeCrawl,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
+ // Tokens we already hold for a category, used by the incremental crawler to stop
+ // paging once it reaches listings it has seen before.
+ function knownTokens(category='light',days=45){
+  const cutoff=new Date(Date.now()-days*86400000).toISOString()
+  return new Set(db.prepare('SELECT token FROM listings WHERE category=? AND last_seen_at>=?').all(category,cutoff).map(row=>row.token))
+ }
+
+ // --- Alert delivery ----------------------------------------------------------
+ // The alerts table existed but nothing was ever sent. These helpers make delivery
+ // idempotent: an alert fires at most once per listing, forever.
+ function enabledAlerts(){
+  return db.prepare('SELECT a.id,a.user_id,a.title,a.filters,u.phone FROM alerts a JOIN users u ON u.id=a.user_id WHERE a.enabled=1').all()
+ }
+ function alertAlreadySent(alertId,listingId){
+  return Boolean(db.prepare('SELECT 1 FROM alert_deliveries WHERE alert_id=? AND listing_id=?').get(alertId,String(listingId)))
+ }
+ function recordAlertDelivery(alertId,userId,listingId,message,status='queued'){
+  try{db.prepare('INSERT OR IGNORE INTO alert_deliveries(alert_id,user_id,listing_id,message,status,created_at) VALUES(?,?,?,?,?,?)')
+   .run(alertId,userId||null,String(listingId),String(message||'').slice(0,500),status,now())}catch{}
+ }
+ function pendingAlertDeliveries(limit=100){return db.prepare("SELECT * FROM alert_deliveries WHERE status='queued' ORDER BY id LIMIT ?").all(limit)}
+ function markAlertDelivered(id,status='sent'){db.prepare('UPDATE alert_deliveries SET status=? WHERE id=?').run(status,id)}
+ function alertHistory(userId,limit=50){return db.prepare('SELECT * FROM alert_deliveries WHERE user_id=? ORDER BY id DESC LIMIT ?').all(userId,limit)}
+
+ // --- Seller reputation -------------------------------------------------------
+ // A dealer who floods the market with bait prices should be visible as such.
+ function recordSellerStats(rows){
+  const upsert=db.prepare('INSERT OR REPLACE INTO seller_reputation(seller_key,label,listings,rejected,review,avg_reference_ratio,updated_at) VALUES(?,?,?,?,?,?,?)')
+  db.exec('BEGIN')
+  try{for(const row of rows)upsert.run(row.key,row.label||'',row.listings||0,row.rejected||0,row.review||0,row.avgRatio||null,now());db.exec('COMMIT')}
+  catch(error){db.exec('ROLLBACK');throw error}
+  return rows.length
+ }
+ function sellerReputation(key){return db.prepare('SELECT * FROM seller_reputation WHERE seller_key=?').get(key)||null}
+ function worstSellers(limit=20){return db.prepare('SELECT * FROM seller_reputation WHERE listings>=5 ORDER BY (CAST(rejected AS REAL)/listings) DESC,listings DESC LIMIT ?').all(limit)}
+
+ // --- Baseline history (market trend) -----------------------------------------
+ // replaceBaseline() overwrites today's numbers; this keeps one daily snapshot so
+ // «قیمت کوییک در ۳۰ روز گذشته» can be drawn.
+ function snapshotBaseline(category,rows){
+  const day=new Date().toISOString().slice(0,10)
+  const insert=db.prepare('INSERT OR REPLACE INTO baseline_history(category,cohort_key,year,color,samples,median,avg,captured_on) VALUES(?,?,?,?,?,?,?,?)')
+  db.exec('BEGIN')
+  try{for(const row of rows)insert.run(category,row.cohortKey,Number(row.year)||0,String(row.color||''),row.samples,row.median,row.avg,day);db.exec('COMMIT')}
+  catch(error){db.exec('ROLLBACK');throw error}
+  return{category,day,rows:rows.length}
+ }
+ function baselineTrend(category,cohortKey,{year=0,color='',days=90}={}){
+  const since=new Date(Date.now()-days*86400000).toISOString().slice(0,10)
+  return db.prepare('SELECT captured_on,samples,median,avg FROM baseline_history WHERE category=? AND cohort_key=? AND year=? AND color=? AND captured_on>=? ORDER BY captured_on').all(category,cohortKey,Number(year)||0,String(color||''),since)
+ }
+ function pruneBaselineHistory(keepDays=365){
+  const cutoff=new Date(Date.now()-keepDays*86400000).toISOString().slice(0,10)
+  return db.prepare('DELETE FROM baseline_history WHERE captured_on<?').run(cutoff).changes
+ }
+
+ // --- Listing detail cache ----------------------------------------------------
+ // The Divar search endpoint never returns colour or mileage; only the detail page
+ // does. Caching what we fetch means coverage accumulates every cycle instead of
+ // re-paying for the same tokens, which is what finally makes per-colour averages
+ // possible.
+ const detailCache={
+  get(token){
+   const row=db.prepare('SELECT color,km,year FROM listing_details WHERE token=?').get(token)
+   return row?{color:row.color||'—',km:row.km||0,year:row.year||0}:null
+  },
+  set(token,fields){
+   try{db.prepare('INSERT OR REPLACE INTO listing_details(token,color,km,year,fetched_at) VALUES(?,?,?,?,?)')
+    .run(token,fields.color||'—',Number(fields.km)||0,Number(fields.year)||0,now())}catch{}
+  },
+  stats(){return db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN color<>'—' AND color<>'' THEN 1 ELSE 0 END) with_color,SUM(CASE WHEN km>0 THEN 1 ELSE 0 END) with_km FROM listing_details").get()},
+ }
+
+ // --- Reference prices (daily valuations from Iranian price authorities) -------
+ // Independent of Divar: used to detect bait/instalment prices and to sanity-check
+ // the averages we derive from listings.
+ function replaceReferencePrices(source,rows,{fetchedAt=now()}={}){
+  const insert=db.prepare('INSERT OR REPLACE INTO reference_prices(source,cohort_key,year,brand,model,trim,label,price,condition,url,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+  db.exec('BEGIN')
+  try{
+   db.prepare('DELETE FROM reference_prices WHERE source=?').run(source)
+   for(const row of rows) insert.run(source,row.cohortKey,Number(row.year)||0,row.brand||'',row.model||'',row.trim||'',row.label||'',Math.round(Number(row.price)||0),row.condition||'',row.url||'',fetchedAt)
+   db.exec('COMMIT')
+  }catch(error){db.exec('ROLLBACK');throw error}
+  return{source,rows:rows.length,fetchedAt}
+ }
+ function referencePrices(limit=5000){return db.prepare('SELECT * FROM reference_prices ORDER BY cohort_key,year DESC LIMIT ?').all(limit).map(row=>({...row,cohortKey:row.cohort_key}))}
+ function referenceMeta(){return db.prepare('SELECT COUNT(*) rows,COUNT(DISTINCT cohort_key) models,MAX(fetched_at) fetched_at FROM reference_prices').get()}
+ function logReferenceRun(entry){db.prepare('INSERT INTO reference_runs(source,ok,rows,raw,note,ms,created_at) VALUES(?,?,?,?,?,?,?)').run(entry.key||entry.source||'',entry.ok?1:0,entry.rows||0,entry.raw||0,entry.note||'',entry.ms||0,now())}
+ function referenceRuns(limit=20){return db.prepare('SELECT * FROM reference_runs ORDER BY id DESC LIMIT ?').all(limit)}
+
+ // --- Rolling market baseline -------------------------------------------------
+ // Persisted average/median per (model, build year, colour) so pricing survives a
+ // restart and so the admin can inspect exactly what the platform believes.
+ function replaceBaseline(category,rows,{windowDays=30,generatedAt=now()}={}){
+  const insert=db.prepare('INSERT OR REPLACE INTO market_baseline(category,cohort_key,year,color,segment,vehicle_type,brand,model,label,samples,avg,median,p25,p75,min,max,mad,dispersion,window_days,generated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+  db.exec('BEGIN')
+  try{
+   db.prepare('DELETE FROM market_baseline WHERE category=?').run(category)
+   for(const row of rows) insert.run(category,row.cohortKey,Number(row.year)||0,String(row.color||''),row.segment||'',row.type||'',row.brand||'',row.model||'',row.label||'',row.samples,row.avg,row.median,row.p25||0,row.p75||0,row.min||0,row.max||0,row.mad||0,row.dispersion||0,windowDays,generatedAt)
+   db.exec('COMMIT')
+  }catch(error){db.exec('ROLLBACK');throw error}
+  return{category,rows:rows.length,generatedAt,windowDays}
+ }
+ function baselineRows(category='light',limit=500){return db.prepare('SELECT * FROM market_baseline WHERE category=? ORDER BY samples DESC LIMIT ?').all(category,limit)}
+ function baselineLookup(category,cohortKey,year=0,color=''){
+  return db.prepare('SELECT * FROM market_baseline WHERE category=? AND cohort_key=? AND year=? AND color=?').get(category,cohortKey,Number(year)||0,String(color||''))||null
+ }
+ function baselineMeta(category='light'){return db.prepare('SELECT COUNT(*) rows,MAX(generated_at) generated_at,MAX(window_days) window_days FROM market_baseline WHERE category=?').get(category)}
+ // Listings seen inside the rolling window — the input the baseline is built from.
+ function recentPayloads(category='light',windowDays=30){
+  const cutoff=new Date(Date.now()-windowDays*86400000).toISOString()
+  return db.prepare('SELECT payload,last_seen_at FROM listings WHERE category=? AND last_seen_at>=?').all(category,cutoff)
+   .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
+   .filter(Boolean)
+ }
+ return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),

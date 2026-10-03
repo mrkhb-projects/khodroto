@@ -9,35 +9,50 @@ describe('Divar integration', () => {
 
   it('ranks below-median listings without fabricated values', () => {
     const ranked = rankListings(
-      [600, 700, 800, 900, 1000, 1100, 1200, 1300, 1400].map((price, index) => ({ id: String(price), title: 'پژو ۲۰۷', price })),
+      [700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1300].map(price => ({ id: String(price), title: 'پژو ۲۰۷', price })),
     )
-    expect(ranked[0]).toMatchObject({ id: '600', market: 1000, discount: 40, sampleSize: 9 })
-    expect(ranked[0].score).toBeGreaterThan(ranked.at(-1).score)
+    const cheap = ranked.find(item => item.id === '800')
+    const dear = ranked.find(item => item.id === '1300')
+    expect(cheap.market).toBe(1000)
+    expect(cheap.sampleSize).toBe(13)
+    expect(cheap.score).toBeGreaterThan(dear.score)
+  })
+
+  it('treats an implausibly deep discount as a fraud signal, not as the best deal', () => {
+    // 40% under a well-sampled cohort is not a bargain — the engine must flag it
+    // instead of crowning it «فرصت عالی» the way the old scorer did.
+    const ranked = rankListings(
+      [...[700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1300], 600]
+        .map((price, index) => ({ id: `r${index}`, title: 'پژو ۲۰۷', price })),
+    )
+    const bait = ranked.find(item => item.price === 600)
+    expect(bait.suspicious).toBe(true)
+    expect(bait.gateCodes).toContain('TOO_CHEAP')
+    expect(ranked[0].price).not.toBe(600)
   })
 
   it('uses the official Kenar API and x-api-key', async () => {
     const calls = []
     const fetchImpl = async (url, options) => {
       calls.push({ url, options })
-      if (options.method === 'POST') return { ok: true, json: async () => ({ posts: [
-        { token: 'a', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '800' }, vehicles_fields: { usage: '20000' } },
-        { token: 'b', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1000' } },
-        { token: 'c', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1200' } },
-        { token: 'd', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '700' } },
-        { token: 'e', title: 'پژو ۲۰۷', city: 'tehran', price: { value: '1300' } },
-      ] }) }
+      // 13 comparables: the pricing engine refuses to publish a market value for a
+      // cohort thinner than MIN_SAMPLES, so the fixture must look like a real market.
+      if (options.method === 'POST') return { ok: true, json: async () => ({ posts:
+        [700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1300].map((price, index) => ({
+          token: `k-${index}`, title: 'پژو ۲۰۷', city: 'tehran', price: { value: String(price) }, vehicles_fields: { usage: '20000' },
+        })) }) }
       return { ok: true, json: async () => ({ token: 'a', city: 'tehran', data: { color: 'سفید', production_year: 1402, images: ['https://example.com/car.jpg'] } }) }
     }
     const result = await fetchKenarListings({ env: { KENAR_API_KEY: 'secret', DIVAR_CITY: 'tehran' }, fetchImpl })
     expect(result.source).toBe('kenar')
-    expect(result.items[0].market).toBe(1000)
+    expect(result.items.find(item => item.price === 700).market).toBe(1000)
     expect(calls[0].url).toContain('/v2/open-platform/finder/post')
     expect(calls[0].options.headers['x-api-key']).toBe('secret')
   })
 
   it('uses Divar current public web endpoints without an API key', async () => {
     const calls = []
-    const rows = [700, 800, 900, 1000, 1100, 1200, 1300].map((price, index) => ({ widget_type: 'POST_ROW', data: {
+    const rows = [700, 750, 800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1300].map((price, index) => ({ widget_type: 'POST_ROW', data: {
       token: `token-${index}`, title: 'پژو ۲۰۷', middle_description_text: `${price} تومان`,
       bottom_description_text: 'لحظاتی پیش در تهران', image_url: 'https://example.com/car.webp',
       action: { payload: { token: `token-${index}`, web_info: { city_persian: 'تهران', district_persian: 'پونک' } } },
@@ -49,7 +64,7 @@ describe('Divar integration', () => {
     }
     const result = await fetchWebListings({ env: { DIVAR_CITY_IDS: '1', DIVAR_WEB_CATEGORY: 'light' }, fetchImpl })
     expect(result.source).toBe('divar-web')
-    expect(result.items[0]).toMatchObject({ price: 700, market: 1000, city: 'تهران، پونک' })
+    expect(result.items.find(item => item.price === 700)).toMatchObject({ market: 1000, city: 'تهران، پونک' })
     expect(calls[0].url).toBe('https://api.divar.ir/v8/postlist/w/search')
     const body = JSON.parse(calls[0].options.body)
     expect(body.city_ids).toEqual(['1'])

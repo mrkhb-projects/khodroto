@@ -147,4 +147,10 @@ function App(){
 }
 
 createRoot(document.getElementById('root')).render(<App/>)
+
+// SEO model pages (/price/:slug) are rendered server-side into <noscript-content>
+// so crawlers and users on slow connections see real numbers immediately. Once the
+// interactive app has mounted, that static copy is redundant — remove it so the
+// content never appears twice.
+requestAnimationFrame(() => document.querySelector('noscript-content')?.remove())
 if('serviceWorker' in navigator&&import.meta.env.PROD)window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))
