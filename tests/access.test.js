@@ -13,8 +13,20 @@ describe('subscription-gated suspicious listing insights', () => {
     expect(canViewRiskInsights({ role: 'admin' }, null)).toBe(true)
   })
 
-  it('removes all suspicious markers for viewers without access', () => {
-    expect(listingForViewer(suspicious, false)).toEqual({ id: 'x', title: 'test', suspicious: false })
-    expect(listingForViewer(suspicious, true)).toBe(suspicious)
+  // The warning itself is safety information and stays public — otherwise hiding a
+  // bait ad by default and revealing it on opt-in would show it with no label at
+  // all. What the paywall protects is the forensic detail behind the verdict.
+  it('keeps the public warning but strips the forensic detail for free viewers', () => {
+    const listing = {
+      ...suspicious, tier: 'suspicious', tierLabel: 'مشکوک یا شرکتی', hidden: true,
+      hiddenReason: 'اختلاف ۳۸٪ با بازار', hiddenReasons: [{ code: 'DEEP_DISCOUNT' }],
+      dealer: true, dealerConfidence: 80, dealerSignals: ['DEALER_WORD:نمایشگاه'], gateCodes: ['TOO_CHEAP'],
+    }
+    const free = listingForViewer(listing, false)
+    expect(free).toMatchObject({ id: 'x', tier: 'suspicious', hidden: true, dealer: true, hiddenReason: 'اختلاف ۳۸٪ با بازار' })
+    for (const secret of ['riskFlags', 'riskLevel', 'gateCodes', 'dealerSignals', 'dealerConfidence', 'hiddenReasons']) {
+      expect(free).not.toHaveProperty(secret)
+    }
+    expect(listingForViewer(listing, true)).toBe(listing)
   })
 })

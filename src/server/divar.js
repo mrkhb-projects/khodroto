@@ -71,6 +71,18 @@ function normalizeKenarSearchItem(post) {
   }
 }
 
+/** Pull a mileage out of free text («کارکرد ۱۷۰٬۰۰۰ کیلومتر», «۱۷۰ هزار کیلومتر»). */
+export function extractKmFromText(text = '') {
+  const raw = String(text || '')
+  const match = raw.match(/(?:کارکرد|کیلومتر\s*کارکرد)\s*[:：]?\s*([۰-۹0-9٬,\.]+\s*(?:هزار|میلیون)?)/)
+    || raw.match(/([۰-۹0-9٬,\.]+\s*(?:هزار|میلیون)?)\s*(?:کیلومتر|کیلومتر کارکرد|km)/i)
+  if (!match) return 0
+  const parsed = parseMileage(match[1])
+  // A bare "۱۴۰۰ کیلومتر" is far more likely to be a model year than a mileage.
+  if (parsed.km >= 1300 && parsed.km <= 1415 && !/هزار|میلیون/.test(match[1])) return 0
+  return parsed.known ? parsed.km : 0
+}
+
 function cleanFreshness(text = '') {
   const first = String(text || '').split(' · ')[0].trim()
   if (!first || /^(در|از)\s/.test(first)) return 'تازه'
@@ -88,7 +100,9 @@ function normalizeWebItem(widget) {
     token: data.token || payload.token,
     title,
     year: extractYearFromText(title),
-    km: 0,
+    // Cheap win before the detail fetch: many sellers put the mileage in the title
+    // or the card's bottom line, and that costs us nothing to read.
+    km: extractKmFromText(`${title} ${data.bottom_description_text || ''}`),
     color: '—',
     city: [webInfo.city_persian, webInfo.district_persian].filter(Boolean).join('، ') || 'دیوار',
     price,
@@ -146,22 +160,64 @@ export function normalizeVehicleYear(value) {
   return 0
 }
 
+// Mileage can be written as «۱۷۰٬۰۰۰ کیلومتر», «۱۷۰ هزار کیلومتر», «170000 کیلومتر»
+// or «صفر». parseNumber alone mis-reads the «هزار» form by a factor of 1000 and
+// returns 0 for «صفر», which is indistinguishable from "unknown" downstream — so
+// mileage gets its own parser that reports whether it actually found a value.
+export function parseMileage(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) return { km: 0, known: false }
+  const latin = toLatinDigits(raw).replace(/[٬,]/g, '')
+  const match = latin.match(/(\d+(?:\.\d+)?)/)
+  // «صفر کیلومتر» is a brand-new car: a KNOWN zero, which must not be confused with
+  // "no mileage recorded". Only trust the word when the text carries no digits at
+  // all, otherwise «۱۷۰٬۰۰۰» would be misread by a stray zero.
+  if (!match) return /صفر/.test(raw) ? { km: 0, known: true } : { km: 0, known: false }
+  let km = Number(match[1])
+  if (/هزار/.test(raw)) km *= 1000
+  if (/میلیون/.test(raw)) km *= 1_000_000
+  km = Math.round(km)
+  if (!Number.isFinite(km) || km < 0 || km > 3_000_000) return { km: 0, known: false }
+  return { km, known: true }
+}
+
+const MILEAGE_LABEL = /کارکرد|کیلومتر|مسافت پیموده/
+const YEAR_LABEL = /سال\s*(ساخت|تولید)?|مدل\s*(خودرو)?|سال$/
+const COLOR_LABEL = /رنگ/
+
+// Divar has shipped several widget shapes for the spec table over the years, and a
+// listing that uses a shape we do not read looks exactly like a listing with no
+// mileage at all. Read every row-like widget instead of two hard-coded types.
+function detailRows(widget) {
+  const data = widget?.data || {}
+  const type = String(widget?.widget_type || '')
+  if (Array.isArray(data.items) && data.items.some(item => item && (item.title || item.value))) return data.items
+  if (/ROW|TABLE|INFO|FEATURE/.test(type) && (data.title || data.value)) return [data]
+  return []
+}
+
 function readDetailFields(detail) {
-  const result = { title: '', image: null, year: 0, km: 0, color: '—' }
+  const result = { title: '', image: null, year: 0, km: 0, kmKnown: false, color: '—' }
   for (const section of detail.sections || []) {
     for (const widget of section.widgets || []) {
       const data = widget.data || {}
       if (section.section_name === 'TITLE' && !result.title) result.title = data.title || ''
       if (section.section_name === 'IMAGE' && !result.image) result.image = data.items?.[0]?.image?.url || data.items?.[0]?.image?.thumbnail_url || null
-      const fields = widget.widget_type === 'GROUP_INFO_ROW' ? data.items || [] : widget.widget_type === 'UNEXPANDABLE_ROW' ? [data] : []
-      for (const field of fields) {
-        const label = String(field.title || '')
-        if (label.includes('کارکرد')) result.km = parseNumber(field.value)
-        if (/سال|مدل/.test(label)) {
-          const year = normalizeVehicleYear(parseNumber(field.value))
+      for (const field of detailRows(widget)) {
+        // Some shapes carry the caption in `title`, others in `label`/`name`; the
+        // value may equally live in `value` or `text`.
+        const label = String(field.title ?? field.label ?? field.name ?? '')
+        const value = field.value ?? field.text ?? field.subtitle ?? ''
+        if (!label) continue
+        if (MILEAGE_LABEL.test(label) && !result.kmKnown) {
+          const mileage = parseMileage(value)
+          if (mileage.known) { result.km = mileage.km; result.kmKnown = true }
+        }
+        if (YEAR_LABEL.test(label) && !result.year) {
+          const year = normalizeVehicleYear(parseNumber(value))
           if (year) result.year = year
         }
-        if (label.includes('رنگ')) result.color = field.value || result.color
+        if (COLOR_LABEL.test(label) && result.color === '—' && value) result.color = String(value)
       }
     }
   }
@@ -174,9 +230,20 @@ async function enrichWebItem(item, env, fetchImpl) {
       method: 'GET', provider: 'web', headers: webHeaders(env),
     }, fetchImpl)
     const fields = readDetailFields(detail)
-    return { ...item, ...fields, title: fields.title || item.title, image: fields.image || item.image, price: parseNumber(detail.webengage?.price) || item.price }
+    return {
+      ...item,
+      ...fields,
+      title: fields.title || item.title,
+      image: fields.image || item.image,
+      // Never let an unread spec table wipe a value the search card already gave us.
+      km: fields.kmKnown ? fields.km : (Number(item.km) || 0),
+      year: fields.year || item.year || 0,
+      color: fields.color !== '—' ? fields.color : (item.color || '—'),
+      price: parseNumber(detail.webengage?.price) || item.price,
+      enriched: true,
+    }
   } catch {
-    return item
+    return { ...item, enrichFailed: true }
   }
 }
 
@@ -217,12 +284,15 @@ export async function enrichListings(rows, {
       const item = pending[index++]
       const result = await enrichWebItem(item, env, fetchImpl)
       const gained = result.color !== item.color || result.km !== item.km || result.year !== item.year
-      if (gained) {
-        fetched += 1
-        enriched.set(item.token, result)
+      if (gained) fetched += 1; else failed += 1
+      enriched.set(item.token, result)
+      // Cache EVERY successful detail fetch, not only the ones that changed a field.
+      // Previously an ad whose detail page added nothing was left uncached, so the
+      // next cycle spent part of its fixed budget re-fetching exactly the same
+      // tokens — the queue never advanced and most listings were never enriched at
+      // all, which is why mileage stayed «نامشخص» site-wide.
+      if (!result.enrichFailed) {
         cache?.set?.(item.token, { color: result.color, km: result.km, year: result.year })
-      } else {
-        failed += 1
       }
       if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs))
     }

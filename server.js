@@ -1,3 +1,6 @@
+// MUST be first: fills process.env from the host's .env before any module below
+// reads a flag off it (BAMA_ENABLED, RING_ENABLED, ADMIN_PASSWORD, …).
+import './src/server/env.js'
 import express from 'express'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -10,6 +13,7 @@ import { analyzeListings, filterListingItems, summarizeMarket, buildPriceIndex, 
 import { provinces, citiesOf, groupedCities, nearestCity, resolveCity } from './src/server/locations.js'
 import { collectReferencePrices, buildReferenceIndex, referenceStatuses, sourceCatalogue } from './src/server/reference/index.js'
 import { providerCatalogue } from './src/server/providers/index.js'
+import { visibilityBand } from './src/server/opportunity.js'
 import { dedupeListings } from './src/server/dedupe.js'
 import { estimateValue } from './src/server/estimate.js'
 import { dispatchAlerts } from './src/server/alerts.js'
@@ -147,6 +151,25 @@ function searchFilters(query) {
     sort: ['score','newest','cheap','expensive'].includes(String(query.sort)) ? String(query.sort) : 'score',
     minPrice: directNumber(query.minPrice) || (budget.includes('بیشتر از ۲') ? 2_000_000_000 : budget.includes('۱.۲ تا ۲') ? 1_200_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 700_000_000 : undefined),
     maxPrice: directNumber(query.maxPrice) || (budget.includes('تا ۵۰۰') ? 500_000_000 : budget.includes('تا ۷۰۰') ? 700_000_000 : budget.includes('۱.۲ تا ۲') ? 2_000_000_000 : budget.includes('۷۰۰') && budget.includes('۱.۲') ? 1_200_000_000 : undefined),
+  }
+}
+
+/**
+ * Split a result set into what the visitor sees by default and what stays behind
+ * the «آگهی‌های مشکوک و شرکتی» opt-in.
+ *
+ * `showHidden=true` (or `includeSuspicious=true`) is the visitor ticking the box.
+ * The counts are always reported so the UI can say «۱۴ آگهی مشکوک پنهان شد».
+ */
+function applyVisibility(items, query = {}) {
+  const asked = ['showHidden', 'includeSuspicious', 'includeDealers'].some(key => String(query[key]) === 'true')
+  const hiddenCount = items.filter(item => item.hidden).length
+  const dealerCount = items.filter(item => item.dealer).length
+  return {
+    items: asked ? items : items.filter(item => !item.hidden),
+    hiddenCount,
+    dealerCount,
+    showingHidden: asked,
   }
 }
 
@@ -553,17 +576,21 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
     const entry=marketAnalysis(filters.category)
     const stored=filterListingItems(applyBudget(entry.items, String(req.query.budget||'')), filters)
     const storedFiltered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? stored.filter(item=>item.suspicious) : stored
-    if(storedFiltered.length){
+    // Hidden listings (dealer bait, >30% under market, failed fraud screen) are kept
+    // out of the default feed for everyone and only returned on explicit opt-in.
+    const visible=applyVisibility(storedFiltered,req.query)
+    if(visible.items.length){
       res.set('Cache-Control', 'private, max-age=60')
-      return res.json({ source:'db', category:filters.category, items:storedFiltered.slice(offset,offset+limit).map(publicListing), totalMatches:storedFiltered.length, offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(storedFiltered,entry), integration:divar.status() })
+      return res.json({ source:'db', category:filters.category, items:visible.items.slice(offset,offset+limit).map(publicListing), totalMatches:visible.items.length, hiddenCount:visible.hiddenCount, dealerCount:visible.dealerCount, showingHidden:visible.showingHidden, visibilityBand:visibilityBand(), offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(visible.items,entry), integration:divar.status() })
     }
     const result = await divar.listings(filters)
     if (!result.cached) await persistCrawl(result)
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
+    const live=applyVisibility(filtered,req.query)
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...publicResult, items: filtered.slice(offset, offset + limit).map(publicListing), totalMatches: filtered.length, offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
+    res.json({ ...publicResult, items: live.items.slice(offset, offset + limit).map(publicListing), totalMatches: live.items.length, hiddenCount:live.hiddenCount, dealerCount:live.dealerCount, showingHidden:live.showingHidden, visibilityBand:visibilityBand(), offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)

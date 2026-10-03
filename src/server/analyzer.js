@@ -60,6 +60,16 @@ export function analyzeListings(items, { category = 'light', includeNoPhoto = fa
       deviation: verdict.deviation,
       score: verdict.score,
       grade: verdict.grade,
+      tier: verdict.tier,
+      tierLabel: verdict.tierLabel,
+      tierMarker: verdict.tierMarker,
+      tierShort: verdict.tierShort,
+      tierColor: verdict.tierColor,
+      hidden: verdict.hidden,
+      hiddenReason: verdict.hiddenReason,
+      hiddenReasons: verdict.hiddenReasons,
+      dealer: verdict.dealer,
+      dealerConfidence: verdict.dealerConfidence,
       confidence: verdict.confidence,
       eligible: verdict.eligible,
       suspicious: verdict.suspicious,
@@ -76,12 +86,14 @@ export function analyzeListings(items, { category = 'light', includeNoPhoto = fa
       referenceYear: screened.reference?.year || 0,
       referenceRatio: screened.reference?.ratio || 0,
     }
-  }).sort((a, b) => Number(a.suspicious) - Number(b.suspicious) || (b.score ?? -1) - (a.score ?? -1))
+  }).sort((a, b) => Number(a.hidden) - Number(b.hidden) || Number(a.suspicious) - Number(b.suspicious) || (b.score ?? -1) - (a.score ?? -1))
 
   return {
     items: analyzed,
     excludedNoPhoto,
     suspiciousCount: analyzed.filter(x => x.suspicious).length,
+    hiddenCount: analyzed.filter(x => x.hidden).length,
+    dealerCount: analyzed.filter(x => x.dealer).length,
     opportunityCount: analyzed.filter(x => x.eligible && ['exceptional', 'strong'].includes(x.grade)).length,
     rejectedCount: analyzed.filter(x => x.trust === 'reject').length,
     reviewCount: analyzed.filter(x => x.trust === 'review').length,

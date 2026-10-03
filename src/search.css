@@ -74,3 +74,15 @@ noscript-content table{width:100%;border-collapse:collapse;margin:10px 0;font-si
 noscript-content caption{text-align:start;color:#6b7385;font-size:.82rem;padding-bottom:6px}
 noscript-content th,noscript-content td{border:1px solid #e6eaf2;padding:8px 10px;text-align:start}
 noscript-content thead th{background:#f6f8fc}
+
+/* --- Opportunity tiers -------------------------------------------------- */
+/* Every card now carries an explicit, colour-coded verdict instead of a bare
+   number, so «۱۰۰ for everything» can no longer read as «all gold». */
+.tier-badge{display:inline-flex;align-items:center;gap:.35rem;margin-top:.45rem;padding:.2rem .6rem;border-radius:999px;font-size:.74rem;font-weight:700;line-height:1.9;color:var(--tier-color,#5a6572);background:color-mix(in srgb,var(--tier-color,#5a6572) 12%,#fff);border:1px solid color-mix(in srgb,var(--tier-color,#5a6572) 35%,#fff)}
+.tier-badge i{font-style:normal;font-size:.82rem}
+.tier-badge em{font-style:normal;margin-inline-start:.3rem;padding:.05rem .35rem;border-radius:6px;background:color-mix(in srgb,var(--tier-color,#5a6572) 22%,#fff);font-size:.68rem}
+.tier-badge.tier-golden{box-shadow:0 1px 6px color-mix(in srgb,#b8860b 25%,transparent)}
+.tier-badge.tier-suspicious{background:#fdecea;border-color:#f2b8b2}
+.hidden-toggle{border-top:1px dashed #d8dde4;margin-top:.6rem;padding-top:.8rem}
+.hidden-toggle small{display:block;color:#6b7280;line-height:1.7}
+.hidden-notice{display:flex;align-items:center;gap:.5rem;margin:.6rem 0;padding:.55rem .8rem;border-radius:10px;background:#f4f6f9;color:#51607a;font-size:.82rem}
