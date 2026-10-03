@@ -76,6 +76,13 @@ describe('cold-start crawl budget', () => {
     await fetchWebListings({ env: { ...env, DIVAR_MAX_PAGES: '6' }, fetchImpl })
     expect(calls.search).toBe(6)
   })
+
+
+  it('honours an admin-provided maxPages filter over the host default', async () => {
+    const { fetchImpl, calls } = endlessDivar()
+    await fetchWebListings({ env: { ...env, DIVAR_MAX_PAGES: '12' }, filters: { maxPages: 3 }, fetchImpl })
+    expect(calls.search).toBe(3)
+  })
 })
 
 describe('foreground requests versus background crawls', () => {

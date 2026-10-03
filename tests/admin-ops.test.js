@@ -44,6 +44,59 @@ describe('admin user directory', () => {
   })
 })
 
+
+describe('admin-managed accounts and subscriptions', () => {
+  it('lets an admin edit user identity fields without dropping the role', () => {
+    const store = createDatabase(':memory:')
+    store.db.prepare("INSERT INTO users(phone,name,role,city,created_at) VALUES('09120000001','قدیمی','user','1','2026-01-01')").run()
+    const user = store.updateAdminUser(1, { name: 'نام تازه', city: '2', role: 'admin' })
+    expect(user).toMatchObject({ name: 'نام تازه', city: '2', role: 'admin' })
+    expect(store.updateAdminUser(404, { name: 'هیچ' })).toBeNull()
+  })
+
+  it('lets an admin create users directly from the panel', () => {
+    const store = createDatabase(':memory:')
+    const user = store.createAdminUser({ phone: '۰۹۱۲۳۴۵۶۷۸۹', name: 'کاربر تازه', city: '1', role: 'admin' })
+    expect(user).toMatchObject({ phone: '09123456789', name: 'کاربر تازه', city: '1', role: 'admin' })
+    expect(store.adminUsers({ query: '09123456789' }).total).toBe(1)
+    expect(store.createAdminUser({ phone: '09123456789', name: 'تکراری' })).toBeNull()
+    expect(store.createAdminUser({ phone: '123', name: 'خراب' })).toBeNull()
+  })
+
+  it('grants any managed plan to a chosen user and expires the previous active plan', () => {
+    const store = createDatabase(':memory:')
+    store.db.prepare("INSERT INTO users(phone,name,role,city,created_at) VALUES('09120000001','کاربر','user','1','2026-01-01')").run()
+    const first = store.grantSubscription(1, { plan: 'pro', days: 10, amount: 123 })
+    expect(first).toMatchObject({ user_id: 1, plan: 'pro', status: 'active', amount: 123 })
+    const second = store.grantSubscription(1, { plan: 'dealer', days: 45 })
+    expect(second.plan).toBe('dealer')
+    const rows = store.adminSubscriptions().filter(row => row.user_id === 1)
+    expect(rows.find(row => row.id === first.id).status).toBe('expired')
+    expect(rows.find(row => row.id === second.id).status).toBe('active')
+  })
+
+  it('adds subscriptions from a phone number and creates the user when needed', () => {
+    const store = createDatabase(':memory:')
+    const row = store.createAdminSubscription({ phone: '09120000002', name: 'کاربر جدید', plan: 'dealer', status: 'active', days: 5000, amount: 777 })
+    expect(row).toMatchObject({ plan: 'dealer', status: 'active', amount: 777 })
+    expect(store.userByPhone('09120000002')).toMatchObject({ name: 'کاربر جدید' })
+    expect(Date.parse(row.expires_at)).toBeGreaterThan(Date.now() + 4900 * 86400000)
+    const pending = store.createAdminSubscription({ phone: '09120000002', plan: 'pro', status: 'pending', days: 30 })
+    expect(pending).toMatchObject({ user_id: row.user_id, plan: 'pro', status: 'pending' })
+    expect(store.adminSubscriptions().filter(item => item.user_id === row.user_id)).toHaveLength(2)
+  })
+
+  it('edits an existing subscription plan, status, amount and expiry', () => {
+    const store = createDatabase(':memory:')
+    store.db.prepare("INSERT INTO users(phone,name,role,city,created_at) VALUES('09120000001','کاربر','user','1','2026-01-01')").run()
+    const row = store.grantSubscription(1, { plan: 'pro', days: 30 })
+    const updated = store.updateSubscription(row.id, { plan: 'dealer', status: 'pending', amount: 999, days: 90 })
+    expect(updated).toMatchObject({ plan: 'dealer', status: 'pending', amount: 999 })
+    expect(Date.parse(updated.expires_at)).toBeGreaterThan(Date.now() + 80 * 86400000)
+    expect(store.updateSubscription(9999, { status: 'active' })).toBeNull()
+  })
+})
+
 describe('manual reference prices', () => {
   let store
   beforeEach(() => { store = createDatabase(':memory:') })
@@ -123,5 +176,27 @@ describe('source toggles', () => {
     expect(providerCatalogue().find(provider => provider.key === 'ring').enabled).toBe(true)
     delete process.env.RING_ENABLED
     setProviderOverrides({})
+  })
+})
+
+describe('shop-style discounts and payment orders', () => {
+  it('creates coupon codes, applies them to checkout totals and enforces usage limits', () => {
+    const store = createDatabase(':memory:')
+    store.saveDiscountCode({ code: 'YALDA30', title: 'کمپین یلدا', percent: 30, max_uses: 1, enabled: true })
+    const first = store.applyDiscount('yalda30', 200000, { consume: true })
+    expect(first).toMatchObject({ ok: true, code: 'YALDA30', discount: 60000, total: 140000 })
+    expect(store.discountCodes()[0].used_count).toBe(1)
+    const second = store.applyDiscount('YALDA30', 200000)
+    expect(second.ok).toBe(false)
+    expect(second.error).toBe('DISCOUNT_LIMIT_REACHED')
+  })
+
+  it('records payment orders for the finance panel and lets admin update status', () => {
+    const store = createDatabase(':memory:')
+    const user = store.createAdminUser({ phone: '09120000003', name: 'خریدار' })
+    const sub = store.grantSubscription(user.id, { plan: 'pro', amount: 100000, days: 30 })
+    const order = store.recordPaymentOrder({ userId: user.id, subscriptionId: sub.id, plan: 'pro', method: 'sandbox', subtotal: 199000, discount: 99000, amount: 100000, status: 'paid', couponCode: 'VIP' })
+    expect(store.adminOrders()[0]).toMatchObject({ id: order.id, phone: '09120000003', amount: 100000, coupon_code: 'VIP' })
+    expect(store.updateOrder(order.id, { status: 'refunded', note: 'برگشت وجه دستی' })).toMatchObject({ status: 'refunded', note: 'برگشت وجه دستی' })
   })
 })

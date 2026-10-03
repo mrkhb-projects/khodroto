@@ -484,7 +484,7 @@ export async function fetchWebListings({ filters = {}, env = process.env, fetchI
     disable_recommendation: false,
     current_tab_slug: 'default',
   }
-  const requestedMaxPages = Number(env.DIVAR_MAX_PAGES ?? 0)
+  const requestedMaxPages = Number(filters.maxPages ?? env.DIVAR_MAX_PAGES ?? 0)
   const hardMaxPages = Math.max(1, Number(env.DIVAR_HARD_MAX_PAGES) || 500)
   const configuredMaxPages = requestedMaxPages > 0 ? Math.min(requestedMaxPages, hardMaxPages) : hardMaxPages
   const maxPages = budget?.maxPages ? Math.min(budget.maxPages, configuredMaxPages) : configuredMaxPages
