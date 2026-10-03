@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useState}from'react'
-import{Activity,AlertTriangle,BarChart3,Bell,Bot,Car,ChevronLeft,CircleHelp,ClipboardList,CreditCard,Database,Eye,FileClock,FileText,Globe2,HardDrive,Image,KeyRound,LayoutDashboard,LockKeyhole,MapPinned,Menu,MessageSquareText,Megaphone,Navigation,Palette,Plus,Radio,ReceiptText,RefreshCw,Save,Search,Settings,ShieldCheck,Tags,TicketCheck,Trash2,TrendingUp,Users,WalletCards,Wrench,X}from'lucide-react'
+import{Download,ShieldAlert,Activity,AlertTriangle,BarChart3,Bell,Bot,Car,ChevronLeft,CircleHelp,ClipboardList,CreditCard,Database,Eye,FileClock,FileText,Globe2,HardDrive,Image,KeyRound,LayoutDashboard,LockKeyhole,MapPinned,Menu,MessageSquareText,Megaphone,Navigation,Palette,Plus,Radio,ReceiptText,RefreshCw,Save,Search,Settings,ShieldCheck,Tags,TicketCheck,Trash2,TrendingUp,Users,WalletCards,Wrench,X}from'lucide-react'
 import{IntegrationsManager}from'./admin-integrations'
 
 const n=value=>new Intl.NumberFormat('fa-IR').format(value||0)
@@ -20,7 +20,7 @@ export function AdminPage(){
  function choose(id){setTab(id);setMenu(false)}
  const menuGroups=[
   ['نمای کلی',[['overview','داشبورد مدیریت',LayoutDashboard],['reports','آمار و گزارش‌ها',BarChart3]]],
-  ['بازار خودرو',[['listings','مدیریت آگهی‌ها',Car],['taxonomy','برند، دسته و شهر',Tags],['crawler','جمع‌آوری و تحلیل',Bot]]],
+  ['بازار خودرو',[['listings','مدیریت آگهی‌ها',Car],['taxonomy','برند، دسته و شهر',Tags],['crawler','جمع‌آوری و تحلیل',Bot],['health','سلامت داده و عملیات',Activity],['sellers','سابقهٔ فروشندگان',ShieldAlert]]],
   ['کاربران',[['users','کاربران و مدیران',Users],['security','نقش‌ها و امنیت',LockKeyhole],['tickets','تیکت‌های پشتیبانی',TicketCheck],['notifications','اعلان‌ها و پیامک',Bell]]],
   ['مالی و اشتراک',[['subscriptions','اشتراک کاربران',WalletCards],['plans','پلن‌های اشتراک',CreditCard],['finance','تراکنش‌ها و درآمد',ReceiptText],['promotions','کمپین و تخفیف',Megaphone]]],
   ['محتوا و ظاهر',[['content','اسلایدر و بنر',Image],['pages','صفحات و قوانین',FileText],['faq','سوالات متداول',CircleHelp],['navigation','منو و فوتر',Navigation],['appearance','ظاهر و نمایش',Palette],['seo','سئو و شبکه اجتماعی',Globe2]]],
@@ -28,7 +28,221 @@ export function AdminPage(){
  ]
  const tabs=menuGroups.flatMap(group=>group[1]),current=tabs.find(item=>item[0]===tab)
  if(authRequired)return <AdminLogin onSuccess={()=>{setAuthRequired(false);setError('');load(tab)}}/>
- return <main className="admin-shell"><aside className={'admin-sidebar '+(menu?'open':'')}><div className="admin-sidebar-brand"><img src="/brand/khodroto-mark.svg"/><div><b>خودروتو</b><span>مرکز مدیریت</span></div><button onClick={()=>setMenu(false)}><X/></button></div><nav>{menuGroups.map(([group,items])=><div className="admin-nav-group" key={group}><span>{group}</span>{items.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>choose(id)} key={id}><Icon/>{label}{id==='tickets'&&stats?.tickets>0&&<i>{n(stats.tickets)}</i>}</button>)}</div>)}</nav><div className="admin-sidebar-foot"><span className={status?.connected?'online':'offline'}><i/>{status?.connected?'سامانه متصل':'داده واقعی قطع است'}</span><a href="/">مشاهده وب‌سایت <ChevronLeft/></a></div></aside><section className="admin-workspace"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMenu(true)}><Menu/></button><div><span>پنل مدیریت فارسی خودروتو</span><h1>{current?.[1]}</h1></div><div className="admin-top-actions"><span>{new Date().toLocaleDateString('fa-IR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span><button onClick={()=>load(tab)}><RefreshCw className={busy?'spin':''}/> تازه‌سازی</button></div></header><div className="admin-canvas">{error&&<div className="admin-warning"><AlertTriangle/>{error}</div>}{notice&&<div className="admin-success"><ShieldCheck/>{notice}</div>}{tab==='overview'&&<Overview stats={stats} status={status} refresh={refreshCrawler} busy={busy} navigate={choose}/>} {tab==='users'&&<UsersPanel items={data} patch={patch}/>} {tab==='plans'&&<PlansPanel items={plans} setItems={setPlans} api={api}/>} {tab==='subscriptions'&&<SubscriptionsPanel items={data} patch={patch}/>} {tab==='tickets'&&<TicketsPanel items={data} patch={patch}/>} {tab==='listings'&&<ListingsPanel items={data} patch={patch}/>} {tab==='content'&&<ContentPanel items={slides} reload={()=>load('content')} api={api}/>} {tab==='taxonomy'&&<CatalogPanel config={configPanels.taxonomy} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)} sync={syncCatalog} busy={busy}/>} {tab==='pages'&&<ConfigPanel config={configPanels.pages} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='faq'&&<ConfigPanel config={configPanels.faq} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='navigation'&&<ConfigPanel config={configPanels.navigation} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='notifications'&&<ConfigPanel config={configPanels.notifications} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='seo'&&<ConfigPanel config={configPanels.seo} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='appearance'&&<><ConfigPanel config={configPanels.appearance} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/></>} {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='finance'&&<FinancePanel items={data} patch={patch}/>} {tab==='reports'&&<ReportsPanel stats={stats} items={data}/>} {tab==='settings'&&<><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><IntegrationsManager value={integrations} reload={()=>load('settings')}/></>} {tab==='audit'&&<AuditPanel items={data}/>}</div></section></main>
+ return <main className="admin-shell"><aside className={'admin-sidebar '+(menu?'open':'')}><div className="admin-sidebar-brand"><img src="/brand/khodroto-mark.svg"/><div><b>خودروتو</b><span>مرکز مدیریت</span></div><button onClick={()=>setMenu(false)}><X/></button></div><nav>{menuGroups.map(([group,items])=><div className="admin-nav-group" key={group}><span>{group}</span>{items.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>choose(id)} key={id}><Icon/>{label}{id==='tickets'&&stats?.tickets>0&&<i>{n(stats.tickets)}</i>}</button>)}</div>)}</nav><div className="admin-sidebar-foot"><span className={status?.connected?'online':'offline'}><i/>{status?.connected?'سامانه متصل':'داده واقعی قطع است'}</span><a href="/">مشاهده وب‌سایت <ChevronLeft/></a></div></aside><section className="admin-workspace"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMenu(true)}><Menu/></button><div><span>پنل مدیریت فارسی خودروتو</span><h1>{current?.[1]}</h1></div><div className="admin-top-actions"><span>{new Date().toLocaleDateString('fa-IR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span><button onClick={()=>load(tab)}><RefreshCw className={busy?'spin':''}/> تازه‌سازی</button></div></header><div className="admin-canvas">{error&&<div className="admin-warning"><AlertTriangle/>{error}</div>}{notice&&<div className="admin-success"><ShieldCheck/>{notice}</div>}{tab==='overview'&&<Overview stats={stats} status={status} refresh={refreshCrawler} busy={busy} navigate={choose}/>} {tab==='users'&&<UsersPanel patch={patch}/>} {tab==='plans'&&<PlansPanel items={plans} setItems={setPlans} api={api}/>} {tab==='subscriptions'&&<SubscriptionsPanel items={data} patch={patch}/>} {tab==='tickets'&&<TicketsPanel items={data} patch={patch}/>} {tab==='listings'&&<ListingsPanel items={data} patch={patch}/>} {tab==='content'&&<ContentPanel items={slides} reload={()=>load('content')} api={api}/>} {tab==='taxonomy'&&<CatalogPanel config={configPanels.taxonomy} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)} sync={syncCatalog} busy={busy}/>} {tab==='pages'&&<ConfigPanel config={configPanels.pages} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='faq'&&<ConfigPanel config={configPanels.faq} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='navigation'&&<ConfigPanel config={configPanels.navigation} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='notifications'&&<ConfigPanel config={configPanels.notifications} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='seo'&&<ConfigPanel config={configPanels.seo} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='appearance'&&<><ConfigPanel config={configPanels.appearance} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/></>} {tab==='health'&&<HealthPanel/>}
+   {tab==='sellers'&&<SellersPanel/>}
+   {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='finance'&&<FinancePanel items={data} patch={patch}/>} {tab==='reports'&&<AnalyticsPanel/>}
+   {tab==='reports'&&<ReportsPanel stats={stats} items={data}/>} {tab==='settings'&&<><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><IntegrationsManager value={integrations} reload={()=>load('settings')}/></>} {tab==='audit'&&<AuditPanel items={data}/>}</div></section></main>
+}
+
+// Operations view. Every number here was already computed inside the server and
+// none of it was reachable from the panel: the operator could not tell whether the
+// crawl was running, how many listings were being hidden, whether the price
+// sources were alive, or how far mileage enrichment had got.
+function HealthPanel(){
+ const [data,setData]=useState(null)
+ const [busy,setBusy]=useState('')
+ const [note,setNote]=useState('')
+ const load=()=>fetch('/api/admin/health').then(response=>response.ok?response.json():null).then(setData).catch(()=>setData(null))
+ useEffect(()=>{load()},[])
+
+ async function run(label,url){
+  setBusy(label);setNote('')
+  try{
+   const response=await fetch(url,{method:'POST'})
+   const body=await response.json().catch(()=>({}))
+   setNote(response.ok?`${label}: انجام شد${body.total?` (${n(body.total)} آگهی)`:body.rows?` (${n(body.rows)} قیمت)`:''}`:`${label}: ناموفق`)
+   load()
+  }catch{setNote(`${label}: ناموفق`)}finally{setBusy('')}
+ }
+
+ const actions=[
+  ['جمع‌آوری تازه','/api/admin/crawler/refresh'],
+  ['بازسازی میانگین بازار','/api/admin/market/rebuild'],
+  ['به‌روزرسانی قیمت‌های مرجع','/api/admin/market/reference/refresh'],
+  ['ارسال هشدارهای در صف','/api/admin/alerts/run'],
+ ]
+
+ return <>
+  <header className="admin-section-hero"><span><Activity/></span><div><h2>سلامت داده و عملیات</h2><p>وضعیت واقعی خط لولهٔ داده و دکمه‌های اجرای دستی.</p></div><button className="primary" onClick={load}><RefreshCw/> تازه‌سازی</button></header>
+  {note&&<div className="admin-panel" style={{padding:'12px 16px'}}>{note}</div>}
+  <section className="admin-panel">
+   <div className="admin-panel-title"><div><h2>خروجی داده</h2><p>برای تحلیل بیرون از پنل. فایل با BOM ذخیره می‌شود تا اکسل فارسی را درست باز کند.</p></div></div>
+   <div className="admin-actions-row">
+    <a className="secondary" href="/api/admin/export/users"><Download/> کاربران</a>
+    <a className="secondary" href="/api/admin/export/subscriptions"><Download/> اشتراک‌ها</a>
+    <a className="secondary" href="/api/admin/export/listings"><Download/> آگهی‌ها</a>
+   </div>
+  </section>
+  <section className="admin-panel">
+   <div className="admin-panel-title"><div><h2>اجرای دستی</h2><p>برای وقتی که نمی‌خواهید منتظر چرخهٔ خودکار بمانید.</p></div></div>
+   <div className="admin-actions-row">{actions.map(([label,url])=>
+    <button key={url} className="secondary" disabled={Boolean(busy)} onClick={()=>run(label,url)}>{busy===label?'در حال اجرا…':label}</button>)}</div>
+  </section>
+  {!data?<section className="admin-panel"><p style={{padding:16}}>در حال بارگذاری…</p></section>:<>
+   <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>بازار به تفکیک دسته</h2><p>چند آگهی تحلیل شده و چند تا از فید عمومی کنار گذاشته شده‌اند.</p></div></div>
+    <table className="admin-table"><thead><tr><th>دسته</th><th>آگهی</th><th>پنهان</th><th>شرکتی</th><th>تکراری حذف‌شده</th><th>طلایی</th><th>مشکوک</th></tr></thead>
+     <tbody>{data.market.map(row=><tr key={row.category}>
+      <td>{row.category}</td>
+      <td>{row.error?'—':n(row.listings)}</td><td>{row.error?'—':n(row.hidden)}</td><td>{row.error?'—':n(row.dealers)}</td>
+      <td>{row.error?'—':n(row.duplicates)}</td><td>{row.error?'—':n(row.tiers?.golden||0)}</td><td>{row.error?row.error:n(row.tiers?.suspicious||0)}</td>
+     </tr>)}</tbody></table>
+   </section>
+   <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>سیاست فعلی نمایش</h2><p>از تنظیمات خوانده می‌شود؛ در «تنظیمات و اتصال‌ها» قابل تغییر است.</p></div></div>
+    <div className="admin-actions-row">
+     <span className="admin-pill">باند فرصت: {n(data.policy?.min)}٪ تا {n(data.policy?.max)}٪ زیر بازار</span>
+     <span className="admin-pill">آگهی شرکتی زیر قیمت: {data.policy?.hideDealers?'پنهان':'نمایش'}</span>
+     <span className="admin-pill">تکمیل مشخصات: {n(data.enrichment?.with_km||0)} کارکرد / {n(data.enrichment?.total||0)} آگهی</span>
+    </div>
+   </section>
+   <SourceToggles sources={data.sources?.listings||[]} onSaved={load}/>
+   <ManualReferencePanel/>
+   <section className="admin-panel">
+    <div className="admin-panel-title"><div><h2>منابع قیمت مرجع</h2><p>{n(data.reference?.models||0)} مدل قیمت مرجع در حافظه.</p></div></div>
+    <table className="admin-table"><thead><tr><th>منبع</th><th>وضعیت</th><th>ردیف</th><th>توضیح</th></tr></thead>
+     <tbody>{(data.sources?.reference||[]).map(row=><tr key={row.key}>
+      <td>{row.name||row.key}</td><td>{row.ok?'سالم':'ناموفق'}</td><td>{n(row.rows||0)}</td><td>{row.note||'—'}</td>
+     </tr>)}</tbody></table>
+   </section>
+  </>}
+ </>
+}
+
+// Minimal dependency-free bar chart. A table of 30 numbers tells an operator
+// nothing about direction; a shape does.
+function MiniChart({series=[],color='#17324f',format=value=>n(value)}){
+ const values=series.map(point=>Number(point.value)||0)
+ const peak=Math.max(1,...values)
+ const total=values.reduce((sum,value)=>sum+value,0)
+ const recent=values.slice(-7).reduce((sum,value)=>sum+value,0)
+ const previous=values.slice(-14,-7).reduce((sum,value)=>sum+value,0)
+ const change=previous?Math.round(((recent-previous)/previous)*100):null
+ return <div className="mini-chart">
+  <div className="mini-chart-bars">{series.map(point=>
+   <span key={point.day} title={`${point.day}: ${format(point.value)}`}
+    style={{height:`${Math.max(2,(Number(point.value)||0)/peak*100)}%`,background:color}}/>)}</div>
+  <div className="mini-chart-foot">
+   <span>مجموع {format(total)}</span>
+   {change!==null&&<span className={change>=0?'up':'down'}>{change>=0?'▲':'▼'} {n(Math.abs(change))}٪ نسبت به هفتهٔ قبل</span>}
+  </div>
+ </div>
+}
+
+function AnalyticsPanel(){
+ const [data,setData]=useState(null)
+ const [days,setDays]=useState(30)
+ useEffect(()=>{
+  let alive=true
+  fetch(`/api/admin/analytics?days=${days}`).then(r=>r.ok?r.json():null).then(d=>{if(alive)setData(d)})
+  return()=>{alive=false}
+ },[days])
+ const cards=[
+  ['درآمد اشتراک',data?.revenue,'#2e7d5b',value=>`${n(Math.round(value/1000))} هزار تومان`],
+  ['کاربران تازه',data?.signups,'#17324f',value=>`${n(value)} نفر`],
+  ['آگهی تحلیل‌شده',data?.analyzed,'#4a6b8a',value=>`${n(value)} آگهی`],
+  ['اعلان ارسالی',data?.alerts,'#b8860b',value=>`${n(value)} اعلان`],
+ ]
+ return <section className="admin-panel">
+  <div className="admin-panel-title">
+   <div><h2>روند {n(days)} روز گذشته</h2><p>درآمد، رشد کاربر و حجم تحلیل در یک نگاه.</p></div>
+   <div className="admin-actions-row" style={{padding:0}}>{[7,30,90].map(option=>
+    <button key={option} className={days===option?'primary':'secondary'} onClick={()=>setDays(option)}>{n(option)} روز</button>)}</div>
+  </div>
+  {!data?<p style={{padding:16}}>در حال بارگذاری…</p>
+   :<div className="admin-chart-grid">{cards.map(([label,series,color,format])=>
+     <article key={label}><h3>{label}</h3><MiniChart series={series||[]} color={color} format={format}/></article>)}</div>}
+ </section>
+}
+
+// Turning a source on used to mean editing .env over SSH and restarting the app.
+function SourceToggles({sources,onSaved}){
+ const [settings,setSettings]=useState(null)
+ const [busy,setBusy]=useState(false)
+ useEffect(()=>{fetch('/api/admin/settings').then(r=>r.ok?r.json():null).then(d=>setSettings(d?.settings||null))},[])
+ const keyFor={bama:'source_bama',sheypoor:'source_sheypoor',ring:'source_ring',khodro45:'source_khodro45',hamrahmechanic:'source_hamrahmechanic'}
+ async function toggle(sourceKey,next){
+  const settingKey=keyFor[sourceKey]
+  if(!settingKey)return
+  setBusy(true)
+  try{
+   await fetch('/api/admin/settings',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({[settingKey]:String(next)})})
+   setSettings(prev=>({...prev,[settingKey]:String(next)}))
+   onSaved?.()
+  }finally{setBusy(false)}
+ }
+ return <section className="admin-panel">
+  <div className="admin-panel-title"><div><h2>منابع آگهی</h2><p>روشن‌کردن منبع، آن را وارد چرخهٔ بعدی جمع‌آوری می‌کند. پیش از روشن‌کردن، روی هاست <code>node scripts/check-sources.mjs</code> را اجرا کنید.</p></div></div>
+  <table className="admin-table"><thead><tr><th>منبع</th><th>دسته‌ها</th><th>وضعیت</th><th>آخرین نتیجه</th><th>توضیح</th></tr></thead>
+   <tbody>{sources.map(row=>{
+    const settingKey=keyFor[row.key]
+    const on=settings?settings[settingKey]==='true':row.enabled
+    return <tr key={row.key}>
+     <td>{row.name}</td>
+     <td>{(row.categories||[]).join('، ')}</td>
+     <td><button className={on?'switch on':'switch'} disabled={busy||!settings} onClick={()=>toggle(row.key,!on)} aria-label="روشن یا خاموش کردن منبع"><i/></button></td>
+     <td>{row.ok===null||row.ok===undefined?'اجرا نشده':row.ok?`${n(row.items)} آگهی`:'خطا'}</td>
+     <td>{row.note||'—'}</td>
+    </tr>})}</tbody></table>
+ </section>
+}
+
+// When a price source starts parsing garbage there was no way to correct it short
+// of editing the database by hand.
+function ManualReferencePanel(){
+ const [items,setItems]=useState(null)
+ const [form,setForm]=useState({cohortKey:'',year:'',price:'',label:''})
+ const [note,setNote]=useState('')
+ const load=()=>fetch('/api/admin/reference/manual').then(r=>r.ok?r.json():null).then(d=>setItems(d?.items||[]))
+ useEffect(()=>{load()},[])
+ async function save(event){
+  event.preventDefault();setNote('')
+  const response=await fetch('/api/admin/reference/manual',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...form,year:Number(form.year),price:Number(form.price)})})
+  if(response.ok){setForm({cohortKey:'',year:'',price:'',label:''});setNote('ثبت شد و بلافاصله اعمال گردید.');load()}
+  else setNote('ثبت نشد؛ شناسهٔ مدل، سال و قیمت را بررسی کنید.')
+ }
+ async function remove(row){
+  await fetch(`/api/admin/reference/manual?cohortKey=${encodeURIComponent(row.cohortKey)}&year=${row.year}&trim=${encodeURIComponent(row.trim||'')}`,{method:'DELETE'})
+  load()
+ }
+ return <section className="admin-panel">
+  <div className="admin-panel-title"><div><h2>قیمت مرجع دستی</h2><p>قیمتی که اینجا وارد کنید بر خروجی همهٔ منابع خودکار اولویت دارد و با به‌روزرسانی آن‌ها پاک نمی‌شود.</p></div></div>
+  {note&&<p style={{padding:'0 16px'}}>{note}</p>}
+  <form className="admin-settings" onSubmit={save}>
+   <label>شناسهٔ مدل (cohortKey)<input required placeholder="light|سواری|پژو|۲۰۷" value={form.cohortKey} onChange={e=>setForm({...form,cohortKey:e.target.value})}/></label>
+   <label>سال<input required inputMode="numeric" placeholder="۱۴۰۱" value={form.year} onChange={e=>setForm({...form,year:e.target.value.replace(/\D/g,'')})}/></label>
+   <label>قیمت (تومان)<input required inputMode="numeric" placeholder="950000000" value={form.price} onChange={e=>setForm({...form,price:e.target.value.replace(/\D/g,'')})}/></label>
+   <label>برچسب<input placeholder="پژو ۲۰۷" value={form.label} onChange={e=>setForm({...form,label:e.target.value})}/></label>
+   <button className="primary"><Save/> ثبت قیمت مرجع</button>
+  </form>
+  {items&&items.length>0&&<table className="admin-table"><thead><tr><th>مدل</th><th>سال</th><th>قیمت</th><th></th></tr></thead>
+   <tbody>{items.map(row=><tr key={`${row.cohortKey}|${row.year}|${row.trim||''}`}>
+    <td>{row.label||row.cohortKey}</td><td>{n(row.year)}</td><td>{money(row.price)}</td>
+    <td><button className="secondary" onClick={()=>remove(row)}><Trash2/> حذف</button></td>
+   </tr>)}</tbody></table>}
+ </section>
+}
+
+// Sellers whose prices repeatedly fail the screen. The data was being aggregated
+// into seller_reputation all along with nowhere to look at it.
+function SellersPanel(){
+ const [data,setData]=useState(null)
+ useEffect(()=>{fetch('/api/admin/sellers').then(response=>response.ok?response.json():null).then(setData).catch(()=>setData(null))},[])
+ const rows=data?.items||[]
+ return <>
+  <header className="admin-section-hero"><span><ShieldAlert/></span><div><h2>سابقهٔ فروشندگان</h2><p>فروشنده‌هایی که آگهی‌هایشان بیش از همه در غربالگری قیمت رد شده‌اند.</p></div></header>
+  <section className="admin-panel">
+   <div className="admin-panel-title"><div><h2>بدترین سوابق</h2><p>سابقه از {n(data?.minAds||5)} آگهی به بالا برای کاربران عمومی نمایش داده می‌شود.</p></div></div>
+   {!data?<p style={{padding:16}}>در حال بارگذاری…</p>:rows.length===0
+    ? <p style={{padding:16}}>هنوز سابقه‌ای ثبت نشده است. این جدول پس از آن پر می‌شود که خزنده هویت نمایشگاه‌ها را از صفحهٔ آگهی‌ها بخواند.</p>
+    : <table className="admin-table"><thead><tr><th>فروشنده</th><th>آگهی</th><th>رد شده</th><th>نیازمند بررسی</th><th>نسبت رد</th><th>میانگین نسبت به مرجع</th></tr></thead>
+       <tbody>{rows.map(row=><tr key={row.seller_key}>
+        <td>{row.label||row.seller_key}</td><td>{n(row.listings)}</td><td>{n(row.rejected)}</td><td>{n(row.review)}</td>
+        <td>{Math.round((row.rejected/Math.max(1,row.listings))*100)}٪</td>
+        <td>{row.avg_reference_ratio?`${Math.round(row.avg_reference_ratio*100)}٪`:'—'}</td>
+       </tr>)}</tbody></table>}
+  </section>
+ </>
 }
 
 function AdminLogin({onSuccess}){const[password,setPassword]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false);async function submit(event){event.preventDefault();setBusy(true);setError('');try{const response=await fetch('/api/admin/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password})}),body=await response.json();if(!response.ok)throw Error(body.error||'LOGIN_FAILED');onSuccess()}catch(error){setError(error.message==='ADMIN_LOGIN_NOT_CONFIGURED'?'رمز مدیریت در تنظیمات سرور تعریف نشده است.':error.message==='ADMIN_PHONE_NOT_CONFIGURED'?'شماره مدیر در تنظیمات سرور تعریف نشده است.':'رمز مدیریت صحیح نیست یا دفعات تلاش بیش از حد بوده است.')}finally{setBusy(false)}}return <main className="admin-login-page"><form onSubmit={submit} className="admin-login-card"><img src="/brand/khodroto-mark.svg" alt=""/><span>مسیر اختصاصی مدیریت</span><h1>ورود به مرکز فرمان خودروتو</h1><p>این صفحه از ورود کاربران سایت جداست. رمز امنی را که در متغیر <b>ADMIN_PASSWORD</b> سرور تعریف کرده‌اید وارد کنید.</p><label>رمز مدیریت<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} minLength="12" required autoFocus placeholder="حداقل ۱۲ کاراکتر"/></label>{error&&<div className="admin-login-error"><AlertTriangle/>{error}</div>}<button className="primary" disabled={busy}>{busy?'در حال بررسی…':'ورود امن به مدیریت'}</button><a href="/">بازگشت به وب‌سایت</a></form></main>}
@@ -37,7 +251,51 @@ function Overview({stats,status,refresh,busy,navigate}){const cards=[[Car,'کل 
 
 function PanelTools({query,setQuery,children}){return <div className="admin-list-tools"><label><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="جست‌وجو در این بخش..."/></label>{children}</div>}
 function Table({headers,rows,empty='هنوز داده‌ای ثبت نشده است.'}){return <section className="admin-table-wrap"><table className="admin-table"><thead><tr>{headers.map(header=><th key={header}>{header}</th>)}</tr></thead><tbody>{rows.length?rows.map((row,index)=><tr key={index}>{row.map((cell,cellIndex)=><td key={cellIndex}>{cell}</td>)}</tr>):<tr><td colSpan={headers.length}>{empty}</td></tr>}</tbody></table></section>}
-function UsersPanel({items,patch}){const[q,setQ]=useState('');const filtered=items.filter(item=>`${item.name} ${item.phone} ${item.city}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><span>{n(filtered.length)} کاربر</span></PanelTools><Table headers={['کاربر','موبایل','شهر','پلن','نقش','عضویت','عملیات']} rows={filtered.map(item=>[item.name,item.phone,item.city,item.plan||'رایگان',<span className={'admin-badge '+item.role}>{item.role==='admin'?'مدیر':'کاربر'}</span>,date(item.created_at),<button className="table-action" onClick={()=>patch(`/api/admin/users/${item.id}`,{role:item.role==='admin'?'user':'admin'})}>{item.role==='admin'?'تبدیل به کاربر':'ارتقا به مدیر'}</button>])}/></>}
+function UsersPanel({patch}){
+ // Was: fetch everything, filter in the browser. With a few thousand users that
+ // ships the whole table on every tab switch and silently truncates at the SQL
+ // LIMIT, so an admin searching for someone who sits past it finds nothing.
+ const [query,setQuery]=useState('')
+ const [role,setRole]=useState('')
+ const [page,setPage]=useState(0)
+ const [result,setResult]=useState({items:[],total:0})
+ const [loading,setLoading]=useState(false)
+ const pageSize=50
+ useEffect(()=>{
+  let alive=true
+  setLoading(true)
+  const params=new URLSearchParams({limit:String(pageSize),offset:String(page*pageSize)})
+  if(query.trim())params.set('query',query.trim())
+  if(role)params.set('role',role)
+  const timer=setTimeout(()=>{
+   fetch(`/api/admin/users?${params}`).then(r=>r.ok?r.json():{items:[],total:0})
+    .then(data=>{if(alive)setResult(data)}).finally(()=>{if(alive)setLoading(false)})
+  },250) // debounce so typing does not fire a query per keystroke
+  return()=>{alive=false;clearTimeout(timer)}
+ },[query,role,page])
+ useEffect(()=>{setPage(0)},[query,role])
+ const pages=Math.max(1,Math.ceil(result.total/pageSize))
+ return <>
+  <PanelTools query={query} setQuery={setQuery}>
+   <span>{n(result.total)} کاربر</span>
+   <select value={role} onChange={event=>setRole(event.target.value)}>
+    <option value="">همهٔ نقش‌ها</option><option value="user">کاربر</option><option value="admin">مدیر</option>
+   </select>
+   <a className="secondary" href="/api/admin/export/users"><Download/> خروجی CSV</a>
+  </PanelTools>
+  <Table headers={['کاربر','موبایل','شهر','پلن','نقش','عضویت','عملیات']} rows={result.items.map(item=>[
+   item.name,item.phone,item.city,item.plan||'رایگان',item.role==='admin'?'مدیر':'کاربر',item.created_at?.slice(0,10)||'—',
+   <button className="secondary" key={item.id} onClick={()=>patch(`/api/admin/users/${item.id}`,{role:item.role==='admin'?'user':'admin'})}>{item.role==='admin'?'سلب دسترسی مدیر':'ارتقا به مدیر'}</button>,
+  ])}/>
+  {loading&&<p style={{padding:'0 16px'}}>در حال جست‌وجو…</p>}
+  {pages>1&&<div className="admin-actions-row">
+   <button className="secondary" disabled={page===0} onClick={()=>setPage(value=>value-1)}>صفحهٔ قبل</button>
+   <span className="admin-pill">صفحهٔ {n(page+1)} از {n(pages)}</span>
+   <button className="secondary" disabled={page>=pages-1} onClick={()=>setPage(value=>value+1)}>صفحهٔ بعد</button>
+  </div>}
+ </>
+}
+
 function SubscriptionsPanel({items,patch}){const[q,setQ]=useState('');const filtered=items.filter(item=>`${item.name} ${item.phone} ${item.plan}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><span>{n(filtered.length)} اشتراک</span></PanelTools><Table headers={['کاربر','پلن','مبلغ','وضعیت','شروع','انقضا','مدیریت']} rows={filtered.map(item=>[item.name||item.phone,item.plan,n(item.amount),<span className={'admin-badge '+item.status}>{subscriptionStatus[item.status]||item.status}</span>,date(item.started_at),date(item.expires_at),<select value={item.status} onChange={e=>patch(`/api/admin/subscriptions/${item.id}`,{status:e.target.value})}><option value="active">فعال</option><option value="pending">در انتظار</option><option value="expired">منقضی</option><option value="cancelled">لغوشده</option></select>])}/></>}
 function TicketsPanel({items,patch}){const[q,setQ]=useState(''),[filter,setFilter]=useState('all');const filtered=items.filter(item=>(filter==='all'||item.status===filter)&&`${item.name} ${item.phone} ${item.subject} ${item.message}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">همه وضعیت‌ها</option><option value="open">باز</option><option value="pending">در حال بررسی</option><option value="closed">بسته</option></select></PanelTools><Table headers={['کاربر','موضوع','پیام','وضعیت','تاریخ','عملیات']} rows={filtered.map(item=>[item.name||item.phone||'مهمان',item.subject,<span className="ticket-message">{item.message}</span>,<span className={'admin-badge '+item.status}>{ticketStatus[item.status]}</span>,date(item.created_at),<select value={item.status} onChange={e=>patch(`/api/admin/tickets/${item.id}`,{status:e.target.value})}><option value="open">باز</option><option value="pending">در حال بررسی</option><option value="closed">بسته</option></select>])}/></>}
 function ListingsPanel({items,patch}){const[q,setQ]=useState(''),[filter,setFilter]=useState('all');const filtered=items.filter(item=>(filter==='all'||item.status===filter)&&`${item.title} ${item.city} ${item.token}`.includes(q));return <><PanelTools query={q} setQuery={setQ}><select value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">همه وضعیت‌ها</option>{Object.entries(listingStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><span>{n(filtered.length)} رکورد</span></PanelTools><Table headers={['عنوان','شهر','قیمت','امتیاز','وضعیت','عدم مشاهده','آخرین مشاهده','عملیات']} rows={filtered.map(item=>[<div className="listing-admin-title"><b>{item.title}</b><small>{item.category}</small></div>,item.city,money(item.price),n(item.score),<span className={`listing-status ${item.status}`}>{listingStatus[item.status]||item.status}</span>,n(item.missing_count),date(item.last_seen_at),<div className="table-actions"><select value={item.status} onChange={e=>patch(`/api/admin/listings/${item.token}`,{status:e.target.value})}>{Object.entries(listingStatus).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><a target="_blank" rel="noreferrer" href={`https://divar.ir/v/${item.token}`}><Eye/> دیوار</a></div>])}/></>}
@@ -66,4 +324,4 @@ function ReportsPanel({stats,items}){return <><header className="admin-section-h
 
 function PlansPanel({items,setItems,api}){async function save(plan){const result=await api(`/api/admin/plans/${plan.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({...plan,features:Array.isArray(plan.features)?plan.features:String(plan.features).split('\n').filter(Boolean)})});setItems(result.items)}function change(id,key,value){setItems(items.map(item=>item.id===id?{...item,[key]:value}:item))}return <section className="admin-panel settings-panel"><div className="admin-panel-title"><div><h2>پلن‌های اشتراک عمومی</h2><p>نام، قیمت، مزایا، اولویت و وضعیت فروش پلن‌ها را مدیریت کنید.</p></div></div><div className="admin-plans-editor">{items.map(plan=><article key={plan.id}><div className="plan-admin-head"><b>{plan.id}</b><label className="maintenance"><input type="checkbox" checked={plan.enabled} onChange={e=>change(plan.id,'enabled',e.target.checked)}/> فعال</label></div><label>نام پلن<input value={plan.name} onChange={e=>change(plan.id,'name',e.target.value)}/></label><label>قیمت ماهانه (تومان)<input type="number" value={plan.price} onChange={e=>change(plan.id,'price',e.target.value)}/></label><label>توضیح<input value={plan.description||''} onChange={e=>change(plan.id,'description',e.target.value)}/></label><label>مزایا؛ هر مورد در یک خط<textarea rows="6" value={(plan.features||[]).join('\n')} onChange={e=>change(plan.id,'features',e.target.value.split('\n'))}/></label><label className="maintenance"><input type="checkbox" checked={plan.popular} onChange={e=>change(plan.id,'popular',e.target.checked)}/> نشان پیشنهادی</label><button className="primary" onClick={()=>save(plan)}><Save/> ذخیره پلن</button></article>)}</div></section>}
 
-function SettingsForm({value,setValue,save}){const fields=[['site_name','نام سایت'],['site_tagline','شعار سایت'],['hero_title','عنوان اصلی صفحه نخست'],['hero_description','توضیح اصلی صفحه نخست'],['support_phone','شماره پشتیبانی'],['support_email','ایمیل پشتیبانی'],['free_results','تعداد نتایج رایگان'],['cache_minutes','زمان کش (دقیقه)'],['score_golden_min','حداقل امتیاز فرصت طلایی'],['score_good_min','حداقل امتیاز فرصت خوب']],cards=[['card_golden','فرصت‌های طلایی'],['card_good','فرصت‌های خوب'],['card_fair','قیمت‌های منصفانه'],['card_expensive','آگهی‌های گران'],['card_suspicious','آگهی‌های مشکوک']];return <section className="admin-panel settings-panel"><div className="admin-panel-title"><div><h2>تنظیمات عمومی پلتفرم</h2><p>هویت، نمایش کارت‌ها، اعلان متحرک و رفتار پایه سایت</p></div></div><div className="admin-settings">{fields.map(([key,label])=><label key={key}>{label}<input value={value[key]||''} onChange={e=>setValue({...value,[key]:e.target.value})}/></label>)}<div className="admin-settings-group"><h3>سبک کارت برای هر گروه آگهی</h3><p>شش طراحی متفاوت در سایت آماده است؛ برای هر سطح امتیاز یک مدل انتخاب کنید.</p><div className="card-style-previews">{[1,2,3,4,5,6].map(n=><span className={`card-style-${n}`} key={n}><i>مدل {n}</i><b>خودروی نمونه</b><small>امتیاز ۸۷</small></span>)}</div><div>{cards.map(([key,label])=><label key={key}>{label}<select value={value[key]||'1'} onChange={e=>setValue({...value,[key]:e.target.value})}>{[1,2,3,4,5,6].map(n=><option value={String(n)} key={n}>کارت مدل {n}</option>)}</select></label>)}</div><label>نمایش آگهی در موبایل<select value={value.mobile_listing_mode||'carousel'} onChange={e=>setValue({...value,mobile_listing_mode:e.target.value})}><option value="carousel">کاروسلی افقی</option><option value="stack">زیر هم</option></select></label></div><label className="admin-ticker-field">متن‌های متحرک بالای سایت<textarea value={value.hero_ticker||''} onChange={e=>setValue({...value,hero_ticker:e.target.value})} rows="5"/><small>هر خط: عنوان | توضیح | امتیاز</small></label><div className="admin-settings-group"><h3>فعال‌سازی بخش‌ها و قابلیت‌ها</h3><p>هر بخش عمومی را بدون تغییر کد روشن یا خاموش کنید.</p><div className="admin-feature-grid">{[['section_slider','اسلایدر بازار'],['section_search','جست‌وجوی صفحه نخست'],['section_opportunities','فرصت‌های امروز'],['section_campaign','بنر اشتراک'],['section_method','روش تحلیل'],['section_score','معرفی امتیاز'],['section_faq','پرسش‌های متداول'],['feature_comparison','مقایسه خودرو'],['feature_alerts','هشدار هوشمند'],['feature_pricing','فروش اشتراک']].map(([key,label])=><label className="maintenance" key={key}><input type="checkbox" checked={value[key]!=='false'} onChange={e=>setValue({...value,[key]:String(e.target.checked)})}/>{label}</label>)}</div></div><label className="maintenance"><input type="checkbox" checked={value.maintenance_mode==='true'} onChange={e=>setValue({...value,maintenance_mode:String(e.target.checked)})}/> حالت تعمیر و نگهداری</label><button className="primary" onClick={save}><Save/> ذخیره تنظیمات</button></div></section>}
+function SettingsForm({value,setValue,save}){const fields=[['site_name','نام سایت'],['site_tagline','شعار سایت'],['hero_title','عنوان اصلی صفحه نخست'],['hero_description','توضیح اصلی صفحه نخست'],['support_phone','شماره پشتیبانی'],['support_email','ایمیل پشتیبانی'],['free_results','تعداد نتایج رایگان'],['cache_minutes','زمان کش (دقیقه)'],['score_golden_min','حداقل امتیاز فرصت طلایی'],['score_good_min','حداقل امتیاز فرصت خوب'],['opportunity_min_discount','شروع باند فرصت (٪ زیر بازار)'],['opportunity_max_discount','سقف باند فرصت (٪ زیر بازار)'],['seller_reputation_min_ads','حداقل آگهی برای نمایش سابقهٔ فروشنده']],cards=[['card_golden','فرصت‌های طلایی'],['card_good','فرصت‌های خوب'],['card_fair','قیمت‌های منصفانه'],['card_expensive','آگهی‌های گران'],['card_suspicious','آگهی‌های مشکوک']];return <section className="admin-panel settings-panel"><div className="admin-panel-title"><div><h2>تنظیمات عمومی پلتفرم</h2><p>هویت، نمایش کارت‌ها، اعلان متحرک و رفتار پایه سایت</p></div></div><div className="admin-settings">{fields.map(([key,label])=><label key={key}>{label}<input value={value[key]||''} onChange={e=>setValue({...value,[key]:e.target.value})}/></label>)}<div className="admin-settings-group"><h3>سبک کارت برای هر گروه آگهی</h3><p>شش طراحی متفاوت در سایت آماده است؛ برای هر سطح امتیاز یک مدل انتخاب کنید.</p><div className="card-style-previews">{[1,2,3,4,5,6].map(n=><span className={`card-style-${n}`} key={n}><i>مدل {n}</i><b>خودروی نمونه</b><small>امتیاز ۸۷</small></span>)}</div><div>{cards.map(([key,label])=><label key={key}>{label}<select value={value[key]||'1'} onChange={e=>setValue({...value,[key]:e.target.value})}>{[1,2,3,4,5,6].map(n=><option value={String(n)} key={n}>کارت مدل {n}</option>)}</select></label>)}</div><label>نمایش آگهی در موبایل<select value={value.mobile_listing_mode||'carousel'} onChange={e=>setValue({...value,mobile_listing_mode:e.target.value})}><option value="carousel">کاروسلی افقی</option><option value="stack">زیر هم</option></select></label></div><label className="admin-ticker-field">متن‌های متحرک بالای سایت<textarea value={value.hero_ticker||''} onChange={e=>setValue({...value,hero_ticker:e.target.value})} rows="5"/><small>هر خط: عنوان | توضیح | امتیاز</small></label><div className="admin-settings-group"><h3>فعال‌سازی بخش‌ها و قابلیت‌ها</h3><p>هر بخش عمومی را بدون تغییر کد روشن یا خاموش کنید.</p><div className="admin-feature-grid">{[['section_slider','اسلایدر بازار'],['section_search','جست‌وجوی صفحه نخست'],['section_opportunities','فرصت‌های امروز'],['section_campaign','بنر اشتراک'],['section_method','روش تحلیل'],['section_score','معرفی امتیاز'],['section_faq','پرسش‌های متداول'],['feature_comparison','مقایسه خودرو'],['feature_alerts','هشدار هوشمند'],['feature_pricing','فروش اشتراک']].map(([key,label])=><label className="maintenance" key={key}><input type="checkbox" checked={value[key]!=='false'} onChange={e=>setValue({...value,[key]:String(e.target.checked)})}/>{label}</label>)}</div></div><label className="maintenance"><input type="checkbox" checked={value.hide_dealer_ads!=='false'} onChange={e=>setValue({...value,hide_dealer_ads:String(e.target.checked)})}/> پنهان‌کردن آگهی‌های شرکتی که زیر قیمت بازارند</label><label className="maintenance"><input type="checkbox" checked={value.maintenance_mode==='true'} onChange={e=>setValue({...value,maintenance_mode:String(e.target.checked)})}/> حالت تعمیر و نگهداری</label><button className="primary" onClick={save}><Save/> ذخیره تنظیمات</button></div></section>}

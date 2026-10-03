@@ -74,3 +74,52 @@ noscript-content table{width:100%;border-collapse:collapse;margin:10px 0;font-si
 noscript-content caption{text-align:start;color:#6b7385;font-size:.82rem;padding-bottom:6px}
 noscript-content th,noscript-content td{border:1px solid #e6eaf2;padding:8px 10px;text-align:start}
 noscript-content thead th{background:#f6f8fc}
+
+/* --- Opportunity tiers -------------------------------------------------- */
+/* Every card now carries an explicit, colour-coded verdict instead of a bare
+   number, so «۱۰۰ for everything» can no longer read as «all gold». */
+.tier-badge{display:inline-flex;align-items:center;gap:.35rem;margin-top:.45rem;padding:.2rem .6rem;border-radius:999px;font-size:.74rem;font-weight:700;line-height:1.9;color:var(--tier-color,#5a6572);background:color-mix(in srgb,var(--tier-color,#5a6572) 12%,#fff);border:1px solid color-mix(in srgb,var(--tier-color,#5a6572) 35%,#fff)}
+.tier-badge i{font-style:normal;font-size:.82rem}
+.tier-badge em{font-style:normal;margin-inline-start:.3rem;padding:.05rem .35rem;border-radius:6px;background:color-mix(in srgb,var(--tier-color,#5a6572) 22%,#fff);font-size:.68rem}
+.tier-badge.tier-golden{box-shadow:0 1px 6px color-mix(in srgb,#b8860b 25%,transparent)}
+.tier-badge.tier-suspicious{background:#fdecea;border-color:#f2b8b2}
+.hidden-toggle{border-top:1px dashed #d8dde4;margin-top:.6rem;padding-top:.8rem}
+.hidden-toggle small{display:block;color:#6b7280;line-height:1.7}
+.hidden-notice{display:flex;align-items:center;gap:.5rem;margin:.6rem 0;padding:.55rem .8rem;border-radius:10px;background:#f4f6f9;color:#51607a;font-size:.82rem}
+
+/* --- Alerts & estimate -------------------------------------------------- */
+.alert-row-actions{display:flex;align-items:center;gap:.5rem}
+.alert-delete{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;border:1px solid #e3e7ec;background:#fff;color:#8a8f98;cursor:pointer}
+.alert-delete:hover{color:#b3261e;border-color:#f2b8b2}
+.alert-create{display:flex;flex-direction:column;gap:.6rem;margin-top:1rem;padding:1rem;border:1px dashed #d8dde4;border-radius:12px}
+.alert-create b{font-size:.9rem}
+.alert-create input{padding:.6rem .8rem;border:1px solid #e3e7ec;border-radius:9px;font:inherit;width:100%}
+.alert-history{margin-top:1.2rem}
+.alert-history-row{display:flex;justify-content:space-between;gap:1rem;padding:.5rem 0;border-bottom:1px solid #f0f2f5;font-size:.84rem}
+.alert-history-row small{color:#6b7280;white-space:nowrap}
+.estimate-form{display:flex;flex-direction:column;gap:.9rem;max-width:620px;margin:0 auto}
+.estimate-form label{display:flex;flex-direction:column;gap:.35rem;font-size:.86rem;font-weight:600;flex:1}
+.estimate-form input{padding:.65rem .85rem;border:1px solid #e3e7ec;border-radius:10px;font:inherit}
+.estimate-result{max-width:620px;margin:1.6rem auto 0;padding:1.4rem;border:1px solid #e3e7ec;border-radius:16px;background:#fff}
+.estimate-result header{display:flex;flex-direction:column;gap:.3rem;text-align:center;padding-bottom:1rem;border-bottom:1px solid #f0f2f5}
+.estimate-result header b{font-size:1.7rem;color:#17324f}
+.estimate-confidence{margin:.9rem 0}
+.estimate-confidence i{display:block;height:6px;border-radius:99px;background:#2e7d5b}
+.estimate-confidence small{display:block;margin-top:.35rem;color:#6b7280}
+.estimate-sources{list-style:none;padding:0;margin:.8rem 0}
+.estimate-sources li{display:flex;align-items:center;gap:.6rem;justify-content:space-between;padding:.5rem 0;border-bottom:1px solid #f6f7f9;font-size:.86rem}
+.estimate-note{color:#6b7280;font-size:.8rem;margin:.4rem 0}
+.estimate-empty{display:flex;align-items:center;gap:.6rem;max-width:620px;margin:1.2rem auto;padding:.9rem 1rem;border-radius:12px;background:#fdf3e7;color:#8a5a22}
+.seller-record{display:flex;align-items:center;gap:.5rem;margin:.6rem 0;padding:.5rem .7rem;border-radius:10px;font-size:.8rem;background:#f4f6f9;color:#51607a}
+.seller-record b{display:block}
+.seller-record small{color:#6b7280}
+.seller-record.seller-good{background:#eef7f1;color:#2e7d5b}
+.seller-record.seller-mixed{background:#fdf3e7;color:#8a5a22}
+.seller-record.seller-bad{background:#fdecea;color:#b3261e}
+.notification-list{display:flex;flex-direction:column;gap:.6rem}
+.notification-row{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem 1rem;border:1px solid #e9edf2;border-radius:12px;background:#fff}
+.notification-row.unread{border-color:#c9dcf0;background:#f6faff}
+.notification-row>div{flex:1}
+.notification-row p{margin:.2rem 0;color:#41506b;font-size:.88rem}
+.notification-row small{color:#8a8f98;font-size:.76rem}
+.notification-row a{align-self:center;white-space:nowrap;font-size:.84rem}

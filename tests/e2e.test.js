@@ -237,6 +237,195 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · API error handling', () => {
+  it('answers an unknown /api path with JSON 404, not the SPA shell', async () => {
+    // It used to fall through to the catch-all and reply 200 text/html, so a
+    // mistyped endpoint looked healthy and callers got a parse error.
+    const response = await get('/api/definitely-not-a-route')
+    expect(response.status).toBe(404)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect((await response.json()).error).toBe('NOT_FOUND')
+  })
+
+  it('still serves the SPA for an unknown page', async () => {
+    const response = await get('/a-page-that-does-not-exist')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+  })
+
+  it('rejects a malformed body with a clean 400', async () => {
+    const response = await get('/api/auth/request-otp', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{broken',
+    })
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toBe('BAD_REQUEST')
+  })
+
+  it('rejects an oversized body rather than buffering it', async () => {
+    const response = await get('/api/auth/request-otp', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '9'.repeat(100000) }),
+    })
+    expect(response.status).toBe(413)
+    expect((await response.json()).error).toBe('PAYLOAD_TOO_LARGE')
+  })
+
+  it('survives hostile query strings without a 500', async () => {
+    for (const query of ['limit=abc', 'limit=-5', 'offset=999999', 'category=../../etc', 'minPrice=9e99', 'city=1;DROP TABLE users']) {
+      const response = await get(`/api/listings?${query}`)
+      expect(response.status, query).toBe(200)
+    }
+  })
+})
+
+describe('e2e · dealer tools are gated', () => {
+  it('refuses the showroom dashboard to anyone without the plan', async () => {
+    expect((await get('/api/dealer/summary')).status).toBe(401)
+    const created = await get('/api/dealer/inventory', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'x' }),
+    })
+    expect(created.status).toBe(401)
+    expect((await get('/api/dealer/export.csv')).status).toBe(401)
+  })
+})
+
+describe('e2e · account-backed features need an account', () => {
+  it('refuses saved listings, notifications and analytics to anonymous callers', async () => {
+    for (const route of ['/api/saved', '/api/notifications']) {
+      expect((await get(route)).status, route).toBe(401)
+    }
+    expect((await get('/api/admin/analytics')).status).toBe(401)
+    const saved = await get('/api/saved', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'x' }),
+    })
+    expect(saved.status).toBe(401)
+    expect((await get('/api/notifications/read', { method: 'POST' })).status).toBe(401)
+  })
+})
+
+describe('e2e · admin operations surface', () => {
+  it('guards every new endpoint behind the admin session', async () => {
+    for (const route of ['/api/admin/health', '/api/admin/sellers', '/api/admin/reference/manual',
+      '/api/admin/export/users', '/api/admin/export/listings', '/api/admin/export/subscriptions']) {
+      expect((await get(route)).status, route).toBe(401)
+    }
+    expect((await get('/api/admin/reference/manual', { method: 'DELETE' })).status).toBe(401)
+  })
+})
+
+describe('e2e · old admin surface still guarded', () => {
+  it('still guards the pre-existing endpoints', async () => {
+    expect((await get('/api/admin/users')).status).toBe(401)
+    expect((await get('/api/admin/settings')).status).toBe(401)
+  })
+})
+
+describe('e2e · scoring policy is configurable, not hard-coded', () => {
+  it('publishes the band the operator configured', async () => {
+    const data = await (await get('/api/listings?limit=3')).json()
+    expect(data.visibilityBand).toMatchObject({ min: 15, max: 30 })
+  })
+})
+
+describe('e2e · the free tier cap is enforced by the server', () => {
+  // It used to live only in the UI, which politely asked for six results. A
+  // visitor who typed ?limit=200 got the entire board and the subscription was
+  // decorative.
+  it('caps an anonymous request however large a limit it asks for', async () => {
+    const response = await get('/api/listings?limit=200')
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data.items.length).toBeLessThanOrEqual(6)
+    // The true match count stays visible — that is what justifies upgrading.
+    expect(data.totalMatches).toBeGreaterThan(data.items.length)
+    expect(data.riskInsightsUnlocked).toBe(false)
+  })
+
+  it('does not let paging reassemble the full list', async () => {
+    const first = await (await get('/api/listings?limit=6&offset=0')).json()
+    const deep = await (await get('/api/listings?limit=6&offset=60')).json()
+    expect(deep.items.length).toBeGreaterThan(0)
+    // A free viewer is pinned to the head of the ranking: paging is a paid
+    // feature, and a moving window would otherwise collect more than the cap.
+    expect(deep.items.map(item => item.id)).toEqual(first.items.map(item => item.id))
+  })
+
+  it('still withholds the forensic fields from a free viewer', async () => {
+    const data = await (await get('/api/listings?limit=3')).json()
+    for (const item of data.items) {
+      expect(item).not.toHaveProperty('gateCodes')
+      expect(item).not.toHaveProperty('dealerSignals')
+      expect(item).not.toHaveProperty('riskFlags')
+    }
+  })
+})
+
+describe('e2e · price hub', () => {
+  it('serves the hub that links the model pages together', async () => {
+    const response = await get('/price')
+    expect(response.status).toBe(200)
+    const html = await response.text()
+    expect(html).toContain('قیمت روز خودرو')
+    expect(html).toContain('"@type":"ItemList"')
+  })
+
+  it('links from the hub to a real model page that renders', async () => {
+    const html = await (await get('/price')).text()
+    const match = html.match(/href="\/price\/([^"]+)"/)
+    expect(match).toBeTruthy()
+    const page = await get(`/price/${match[1]}`)
+    expect(page.status).toBe(200)
+    const body = await page.text()
+    expect(body).toContain('"@type":"BreadcrumbList"')
+    expect(body).toContain('"@type":"FAQPage"')
+  })
+
+  it('advertises the hub and the estimator in the sitemap', async () => {
+    const xml = await (await get('/sitemap.xml')).text()
+    expect(xml).toContain('/price</loc>')
+    expect(xml).toContain('/estimate</loc>')
+  })
+})
+
+describe('e2e · seller tools', () => {
+  it('serves the value-estimate page', async () => {
+    const response = await get('/estimate')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+  })
+
+  it('estimates a car the seeded market knows', async () => {
+    const response = await get('/api/market/estimate?title=' + encodeURIComponent('پژو ۲۰۷ اتوماتیک') + '&year=1401&km=80000')
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data.ok).toBe(true)
+    expect(data.estimate).toBeGreaterThan(0)
+    expect(data.range.high).toBeGreaterThan(data.range.low)
+  })
+
+  it('says so plainly instead of guessing an unknown model', async () => {
+    const response = await get('/api/market/estimate?title=' + encodeURIComponent('خودروی ناشناخته'))
+    expect(response.status).toBe(404)
+    const data = await response.json()
+    expect(data.ok).toBe(false)
+    expect(typeof data.message).toBe('string')
+  })
+})
+
+describe('e2e · alerts require a signed-in user', () => {
+  it('rejects anonymous reads and writes rather than leaking', async () => {
+    expect((await get('/api/alerts')).status).toBe(401)
+    const created = await get('/api/alerts', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'x', filters: {} }),
+    })
+    expect(created.status).toBe(401)
+    expect((await get('/api/alerts/1', { method: 'DELETE' })).status).toBe(401)
+  })
+})
+
 describe('e2e · resilience', () => {
   it('returns JSON errors, not HTML, for bad API input', async () => {
     const response = await get('/api/market/trend')

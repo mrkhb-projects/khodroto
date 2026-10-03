@@ -1,3 +1,6 @@
+// MUST be first: fills process.env from the host's .env before any module below
+// reads a flag off it (BAMA_ENABLED, RING_ENABLED, ADMIN_PASSWORD, …).
+import './src/server/env.js'
 import express from 'express'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -10,12 +13,13 @@ import { analyzeListings, filterListingItems, summarizeMarket, buildPriceIndex, 
 import { provinces, citiesOf, groupedCities, nearestCity, resolveCity } from './src/server/locations.js'
 import { collectReferencePrices, buildReferenceIndex, referenceStatuses, sourceCatalogue } from './src/server/reference/index.js'
 import { providerCatalogue } from './src/server/providers/index.js'
+import { visibilityBand } from './src/server/opportunity.js'
 import { dedupeListings } from './src/server/dedupe.js'
 import { estimateValue } from './src/server/estimate.js'
 import { dispatchAlerts } from './src/server/alerts.js'
-import { buildModelPages, renderModelPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
+import { buildModelPages, renderModelPage, renderIndexPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
 import fs from 'node:fs'
-import { collectExternalListings, providerStatuses } from './src/server/providers/index.js'
+import { collectExternalListings, providerStatuses, setProviderOverrides } from './src/server/providers/index.js'
 
 let referenceIndex = buildReferenceIndex([])
 const app = express()
@@ -150,6 +154,39 @@ function searchFilters(query) {
   }
 }
 
+/**
+ * Split a result set into what the visitor sees by default and what stays behind
+ * the «آگهی‌های مشکوک و شرکتی» opt-in.
+ *
+ * `showHidden=true` (or `includeSuspicious=true`) is the visitor ticking the box.
+ * The counts are always reported so the UI can say «۱۴ آگهی مشکوک پنهان شد».
+ */
+/**
+ * How many listings one request may return.
+ *
+ * Paid viewers get the full page size; everyone else gets `free_results` (default
+ * 6, tunable in the admin panel). Clamped to a sane floor so a mistyped setting
+ * cannot make the site look empty, and to a ceiling so nobody can pull the whole
+ * database in one call.
+ */
+function planResultCap(unlocked) {
+  if (unlocked) return 200
+  const configured = Number(store.settings().free_results)
+  return Math.min(60, Math.max(3, Number.isFinite(configured) && configured > 0 ? configured : 6))
+}
+
+function applyVisibility(items, query = {}) {
+  const asked = ['showHidden', 'includeSuspicious', 'includeDealers'].some(key => String(query[key]) === 'true')
+  const hiddenCount = items.filter(item => item.hidden).length
+  const dealerCount = items.filter(item => item.dealer).length
+  return {
+    items: asked ? items : items.filter(item => !item.hidden),
+    hiddenCount,
+    dealerCount,
+    showingHidden: asked,
+  }
+}
+
 function applyBudget(items, budget = '') {
   if (budget.includes('تا ۵۰۰')) return items.filter(item => item.price <= 500_000_000)
   if (budget.includes('تا ۷۰۰')) return items.filter(item => item.price <= 700_000_000)
@@ -167,15 +204,56 @@ app.get('/api/auth/me',(req,res)=>res.json({user:store.userFromToken(cookieToken
 app.post('/api/auth/logout',(req,res)=>{store.logout(cookieToken(req));res.setHeader('Set-Cookie','khodroto_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');res.json({ok:true})})
 app.patch('/api/user',requireUser,(req,res)=>res.json({user:store.updateUser(req.user.id,{name:String(req.body.name||req.user.name).slice(0,80),city:String(req.body.city||req.user.city).slice(0,20)})}))
 app.get('/api/alerts',requireUser,(req,res)=>res.json({items:store.alerts(req.user.id)}))
-app.post('/api/alerts',requireUser,(req,res)=>{store.createAlert(req.user.id,{title:String(req.body.title||'هشدار خودرو').slice(0,100),filters:req.body.filters||{}});res.status(201).json({ok:true})})
+// A saved alert is the product's sharpest edge: a real opportunity is gone within
+// hours, so being told first is what the subscription actually sells. The matcher
+// in alerts.js was complete; what was missing was the user ever creating one.
+const ALERT_LIMIT=Number(process.env.MAX_ALERTS_PER_USER)||20
+const ALERT_FILTER_KEYS=['category','query','queryText','city','cityNames','minPrice','maxPrice','minYear','maxYear','maxUsage','brand','model','color','gearbox','body']
+const cleanAlertFilters=input=>{
+ const source=input&&typeof input==='object'?input:{}
+ const out={}
+ for(const key of ALERT_FILTER_KEYS){
+  const value=source[key]
+  if(value===undefined||value===null||value==='')continue
+  if(Array.isArray(value)){const list=value.map(entry=>String(entry).slice(0,60)).filter(Boolean).slice(0,30);if(list.length)out[key]=list;continue}
+  if(typeof value==='number'){if(Number.isFinite(value))out[key]=value;continue}
+  const text=String(value).slice(0,80)
+  if(text&&!text.startsWith('همه'))out[key]=text
+ }
+ return out
+}
+app.post('/api/alerts',requireUser,(req,res)=>{
+ if(store.countAlerts(req.user.id)>=ALERT_LIMIT)return res.status(409).json({error:'ALERT_LIMIT_REACHED',limit:ALERT_LIMIT})
+ const title=String(req.body?.title||'').trim().slice(0,100)||'هشدار خودرو'
+ store.createAlert(req.user.id,{title,filters:cleanAlertFilters(req.body?.filters)})
+ res.status(201).json({ok:true,items:store.alerts(req.user.id)})
+})
 app.patch('/api/alerts/:id',requireUser,(req,res)=>{store.toggleAlert(req.user.id,Number(req.params.id),Boolean(req.body.enabled));res.json({ok:true})})
+app.delete('/api/alerts/:id',requireUser,(req,res)=>{
+ const removed=store.deleteAlert(req.user.id,Number(req.params.id))
+ if(!removed)return res.status(404).json({error:'ALERT_NOT_FOUND'})
+ res.json({ok:true})
+})
 app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{subject:String(req.body.subject||'پشتیبانی').slice(0,100),message:String(req.body.message||'').slice(0,2000)});res.status(201).json({ok:true})})
 app.post('/api/contact',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now(),recent=(contactAttempts.get(key)||[]).filter(time=>stamp-time<600000);if(recent.length>=5)return res.status(429).json({error:'RATE_LIMITED'});const name=String(req.body?.name||'').trim().slice(0,80),contact=String(req.body?.contact||'').trim().slice(0,120),subject=String(req.body?.subject||'').trim().slice(0,100),message=String(req.body?.message||'').trim().slice(0,2000);if(name.length<2||contact.length<5||subject.length<2||message.length<10)return res.status(400).json({error:'INVALID_INPUT'});contactAttempts.set(key,[...recent,stamp]);store.createTicket(null,{subject:`${subject} — ${name}`,message:`راه ارتباطی: ${contact}\n\n${message}`});res.status(201).json({ok:true})})
 
 app.get('/api/subscription',requireUser,(req,res)=>res.json({subscription:store.subscription(req.user.id)||null}))
 app.post('/api/subscription/checkout',requireUser,(req,res)=>{const plan=String(req.body.plan||''),managed=store.plans(true).find(item=>item.id===plan&&item.price>0);if(!managed)return res.status(400).json({error:'INVALID_PLAN'});const gateways=store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority})),requested=Number(req.body.gatewayId),gateway=gateways.find(item=>item.id===requested)||gateways[0]||null;res.json({subscription:store.subscribe(req.user.id,plan,managed.price),mode:gateway||process.env.PAYMENT_GATEWAY?'gateway':'sandbox',gateway,gateways})})
 app.get('/api/listings/:token/history',(req,res)=>res.json({items:store.listHistory(String(req.params.token))}))
-app.get('/api/stats/public',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json(store.publicStats())})
+// The stored `score` column is only written during a crawl and is never updated
+// when the baseline is recomputed, so counting golden opportunities from it
+// reported stale numbers — zero on a database filled before tiering existed.
+// Count from the live analysis instead, and fall back to the column if that fails.
+app.get('/api/stats/public',(_req,res)=>{
+ const stats=store.publicStats()
+ try{
+  const entry=marketAnalysis('light')
+  stats.goldenOpportunities=entry.items.filter(item=>!item.hidden&&item.tier==='golden').length
+  stats.visibleListings=entry.items.filter(item=>!item.hidden).length
+  stats.hiddenListings=entry.items.filter(item=>item.hidden).length
+ }catch(error){console.warn(`[stats] ${error.message}`)}
+ res.set('Cache-Control','public, max-age=60');res.json(stats)
+})
 app.get('/api/content/slides',(_req,res)=>{res.set('Cache-Control','public, max-age=60');res.json({items:store.slides(true)})})
 app.get('/api/catalog/vehicles',(_req,res)=>{res.set('Cache-Control','public, max-age=3600');res.json(publicVehicleCatalog(store.settings()))})
 // --- Location directory -----------------------------------------------------
@@ -246,6 +324,49 @@ export async function runAlerts() {
 }
 
 app.get('/api/alerts/history', requireUser, (req, res) => res.json({ items: store.alertHistory(req.user.id) }))
+
+// --- In-app notifications ----------------------------------------------------
+// An alert that only ever becomes an SMS is invisible to someone already on the
+// site, and impossible to verify when the SMS provider is down.
+app.get('/api/notifications', requireUser, (req, res) => res.json({
+ items: store.notifications(req.user.id, Math.min(100, Math.max(1, Number(req.query.limit) || 30))),
+ unread: store.unreadNotifications(req.user.id),
+}))
+app.post('/api/notifications/read', requireUser, (req, res) => {
+ const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite).slice(0, 100) : null
+ const changed = store.markNotificationsRead(req.user.id, ids)
+ res.json({ ok: true, changed, unread: store.unreadNotifications(req.user.id) })
+})
+
+// --- Saved listings ----------------------------------------------------------
+// They lived in localStorage: lost on a new browser, and invisible to the server.
+app.get('/api/saved', requireUser, (req, res) => res.json({ items: store.savedListings(req.user.id), tokens: store.savedTokens(req.user.id) }))
+app.post('/api/saved', requireUser, (req, res) => {
+ const token = String(req.body?.token || req.body?.id || '').slice(0, 120)
+ if (!token) return res.status(400).json({ error: 'TOKEN_REQUIRED' })
+ // Store a trimmed copy so the dashboard can render the card even after the ad
+ // disappears from the live market.
+ const source = req.body?.listing || {}
+ const keep = ['title','price','city','year','km','color','image','link','score','tier','tierLabel','market','discount','freshness','hidden','dealer']
+ store.saveListing(req.user.id, token, Object.fromEntries(keep.map(key => [key, source[key]]).filter(([, value]) => value !== undefined)))
+ res.status(201).json({ ok: true, tokens: store.savedTokens(req.user.id) })
+})
+app.delete('/api/saved/:token', requireUser, (req, res) => {
+ store.unsaveListing(req.user.id, String(req.params.token))
+ res.json({ ok: true, tokens: store.savedTokens(req.user.id) })
+})
+// One-shot import of whatever the browser already had, so nobody loses their list.
+app.post('/api/saved/import', requireUser, (req, res) => {
+ const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 100) : []
+ let imported = 0
+ for (const item of items) {
+  const token = String(item?.token || item?.id || '')
+  if (!token) continue
+  store.saveListing(req.user.id, token, item)
+  imported += 1
+ }
+ res.json({ ok: true, imported, tokens: store.savedTokens(req.user.id) })
+})
 app.post('/api/admin/alerts/run', adminOnly, async (req, res) => {
  const result = await runAlerts()
  store.audit(req.user.id, 'run', 'alerts', 'manual', result)
@@ -272,14 +393,27 @@ function seoPages() {
 }
 const siteOrigin = () => (process.env.SITE_ORIGIN || 'https://bidup.ir').replace(/\/$/, '')
 
+const readShell = () => { try { return fs.readFileSync(path.join(dist, 'index.html'), 'utf8') } catch { return null } }
+
+// The hub. Without it every /price/:slug page is an orphan that only the sitemap
+// knows about — no internal links in, and no way for a visitor who landed on one
+// model to reach another.
+app.get('/price', rateLimit({ max: 120 }), (_req, res, next) => {
+ const { pages } = seoPages()
+ const shell = readShell()
+ if (!shell || !pages.length) return next()
+ res.set('Cache-Control', 'public, max-age=600')
+ res.type('html').send(renderIndexPage(shell, pages, { origin: siteOrigin() }))
+})
+
 app.get('/price/:slug', rateLimit({ max: 120 }), (req, res, next) => {
- const { bySlug } = seoPages()
+ const { bySlug, pages } = seoPages()
  const page = bySlug.get(slugify(decodeURIComponent(req.params.slug)))
  if (!page) return next()
- let shell
- try { shell = fs.readFileSync(path.join(dist, 'index.html'), 'utf8') } catch { return next() }
+ const shell = readShell()
+ if (!shell) return next()
  res.set('Cache-Control', 'public, max-age=600')
- res.type('html').send(renderModelPage(shell, page, { origin: siteOrigin() }))
+ res.type('html').send(renderModelPage(shell, page, { origin: siteOrigin(), allPages: pages }))
 })
 
 // Machine-readable index of every model page, handy for debugging and for the UI.
@@ -291,7 +425,7 @@ app.get('/api/seo/models', rateLimit({ max: 30 }), (_req, res) => {
 app.get('/sitemap.xml', (_req, res) => {
  const { pages } = seoPages()
  res.set('Cache-Control', 'public, max-age=3600').type('application/xml')
- res.send(renderSitemap(pages, { origin: siteOrigin(), staticPaths: ['/', '/cars', '/compare', '/methodology', '/pricing', '/faq', '/about'] }))
+ res.send(renderSitemap(pages, { origin: siteOrigin(), staticPaths: ['/', '/cars', '/price', '/estimate', '/compare', '/methodology', '/pricing', '/faq', '/about'] }))
 })
 
 app.get('/robots.txt', (_req, res) => {
@@ -369,8 +503,116 @@ app.get('/api/market/sellers', rateLimit({ max: 30 }), (_req, res) => {
 app.get('/api/plans',(_req,res)=>res.json({items:store.plans(true)}))
 app.get('/api/payment/options',(_req,res)=>res.json({items:store.integrations('payment').filter(item=>item.enabled&&item.hasSecret).map(({id,name,provider,priority})=>({id,name,provider,priority}))}))
 app.get('/api/settings/public',(_req,res)=>{const s=store.settings(),keys=['site_name','site_tagline','support_phone','support_email','maintenance_mode','card_golden','card_good','card_fair','card_expensive','card_suspicious','mobile_listing_mode','hero_ticker','hero_title','hero_description','section_slider','section_search','section_opportunities','section_campaign','section_method','section_score','section_faq','feature_comparison','feature_alerts','feature_pricing','score_golden_min','score_good_min','vehicle_categories','vehicle_brands','supported_cities','vehicle_colors','default_city','default_sort','enable_motorcycles','enable_heavy_vehicles','faq_content','faq_enabled','faq_home_count','header_links','footer_platform_links','footer_help_links','footer_description','copyright_text','public_font_scale','show_announcement','enable_motion','campaign_enabled','campaign_title','campaign_description','campaign_discount','campaign_cta','seo_title','seo_description','og_title','og_description','og_image'];res.json(Object.fromEntries(keys.map(key=>[key,s[key]])))})
-app.get('/api/dealer/summary',requireDealer,(req,res)=>{const inventory=store.dealerInventory(req.user.id),leads=store.dealerLeads(req.user.id),investment=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.buy_price,0),expected=inventory.filter(item=>item.status!=='sold').reduce((sum,item)=>sum+item.target_price,0);res.json({inventory,leads,metrics:{inventoryCount:inventory.length,available:inventory.filter(item=>item.status==='available').length,activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,investment,expectedProfit:Math.max(0,expected-investment)},market:store.publicStats()})})
-app.post('/api/dealer/inventory',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerInventory(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
+/**
+ * Dealer dashboard.
+ *
+ * It used to be a private spreadsheet: a dealer typed in what they paid and what
+ * they hoped to get, and the platform — whose entire reason to exist is knowing
+ * what a car is worth — said nothing about either number. Every inventory row is
+ * now valued against the live market, which is the only thing here a showroom
+ * cannot already do in Excel.
+ */
+app.get('/api/dealer/summary',requireDealer,(req,res)=>{
+ const inventory=store.dealerInventory(req.user.id)
+ const leads=store.dealerLeads(req.user.id)
+ let priceIndex=null
+ try{priceIndex=marketAnalysis('light').priceIndex}catch{}
+
+ const priced=inventory.map(item=>{
+  const valuation=estimateValue({
+   title:item.title,brand:item.brand,model:item.model,year:item.year,category:'light',
+  },{priceIndex,reference:referenceIndex})
+  if(!valuation.ok)return{...item,market:null,marketNote:valuation.message}
+  const market=valuation.estimate
+  const target=Number(item.target_price)||0
+  const bought=Number(item.buy_price)||0
+  // Positive = asking above the market, which is what keeps a car on the forecourt.
+  const askGap=target&&market?Number((((target-market)/market)*100).toFixed(1)):null
+  const margin=target&&bought?target-bought:null
+  // How long the showroom's money has been parked in this car, and which way the
+  // market has moved since it was taken in. Capital sitting still is the cost a
+  // dealer feels but cannot see.
+  const addedAt=Date.parse(item.created_at||'')
+  const daysInStock=Number.isFinite(addedAt)?Math.max(0,Math.floor((Date.now()-addedAt)/86400000)):null
+  const baseline=Number(item.market_at_add)||0
+  const marketDrift=baseline&&market?Number((((market-baseline)/baseline)*100).toFixed(1)):null
+  return{
+   ...item,
+   daysInStock,
+   marketDrift,
+   // Negative drift on an old car is the combination that actually loses money.
+   stale:daysInStock!==null&&daysInStock>=45,
+   market,
+   marketRange:valuation.range,
+   marketConfidence:valuation.confidence,
+   askGap,
+   margin,
+   // A suggestion, not an instruction: the midpoint between the market value and
+   // what they are asking, so the advice is never a cliff.
+   suggestedPrice:market&&target&&askGap>8?Math.round((market+target)/2):null,
+   verdict:!target||!market?'نامشخص'
+    :askGap>15?'خیلی بالاتر از بازار؛ احتمال ماندن در نمایشگاه'
+    :askGap>8?'بالاتر از بازار؛ فروش کند خواهد بود'
+    :askGap<-8?'زیر بازار؛ جا برای افزایش قیمت هست'
+    :'هم‌تراز با بازار',
+  }
+ })
+
+ // Attach each buyer to the car they asked about, so "who is waiting on this
+ // one?" stops being a memory exercise.
+ const leadsByCar=new Map()
+ for(const lead of leads){
+  if(!lead.inventory_id)continue
+  if(!leadsByCar.has(lead.inventory_id))leadsByCar.set(lead.inventory_id,[])
+  leadsByCar.get(lead.inventory_id).push({id:lead.id,name:lead.name,phone:lead.phone,status:lead.status,budget:lead.budget})
+ }
+ for(const item of priced){
+  item.leads=leadsByCar.get(item.id)||[]
+  item.activeLeads=item.leads.filter(lead=>!['won','lost'].includes(lead.status)).length
+ }
+
+ const unsold=priced.filter(item=>item.status!=='sold')
+ const investment=unsold.reduce((sum,item)=>sum+(Number(item.buy_price)||0),0)
+ const expected=unsold.reduce((sum,item)=>sum+(Number(item.target_price)||0),0)
+ const marketValue=unsold.reduce((sum,item)=>sum+(item.market||Number(item.target_price)||0),0)
+ const overpriced=unsold.filter(item=>item.askGap!==null&&item.askGap>8)
+
+ res.json({
+  inventory:priced,
+  leads,
+  metrics:{
+   inventoryCount:inventory.length,
+   available:inventory.filter(item=>item.status==='available').length,
+   activeLeads:leads.filter(item=>!['won','lost'].includes(item.status)).length,
+   investment,
+   expectedProfit:expected-investment,
+   // What the market says the unsold stock is worth right now, versus the asking
+   // total — the single number a showroom owner actually wants each morning.
+   marketValue,
+   marketVsAsking:expected?Number((((marketValue-expected)/expected)*100).toFixed(1)):null,
+   overpricedCount:overpriced.length,
+   staleCount:unsold.filter(item=>item.stale).length,
+   // Money tied up in cars that have been sitting for 45 days or more.
+   stalledCapital:unsold.filter(item=>item.stale).reduce((sum,item)=>sum+(Number(item.buy_price)||0),0),
+   averageDaysInStock:unsold.length?Math.round(unsold.reduce((sum,item)=>sum+(item.daysInStock||0),0)/unsold.length):0,
+   unlinkedLeads:leads.filter(lead=>!lead.inventory_id&&!['won','lost'].includes(lead.status)).length,
+  },
+  market:store.publicStats(),
+ })
+})
+app.post('/api/dealer/inventory',requireDealer,(req,res)=>{
+ try{
+  // Freeze what the car is worth today. Recomputing it later from the current
+  // baseline would silently rewrite history and make drift always read zero.
+  let marketAtAdd=0
+  try{
+   const valuation=estimateValue({title:req.body?.title,brand:req.body?.brand,model:req.body?.model,year:req.body?.year,category:'light'},
+    {priceIndex:marketAnalysis('light').priceIndex,reference:referenceIndex})
+   if(valuation.ok)marketAtAdd=valuation.estimate
+  }catch{}
+  res.status(201).json({items:store.saveDealerInventory(req.user.id,{...req.body,market_at_add:marketAtAdd})})
+ }catch{res.status(400).json({error:'INVALID_INVENTORY'})}
+})
 app.patch('/api/dealer/inventory/:id',requireDealer,(req,res)=>{try{const items=store.saveDealerInventory(req.user.id,req.body||{},Number(req.params.id));if(!items)return res.status(404).json({error:'NOT_FOUND'});res.json({items})}catch{res.status(400).json({error:'INVALID_INVENTORY'})}})
 app.delete('/api/dealer/inventory/:id',requireDealer,(req,res)=>{store.deleteDealerInventory(req.user.id,Number(req.params.id));res.json({ok:true})})
 app.post('/api/dealer/leads',requireDealer,(req,res)=>{try{res.status(201).json({items:store.saveDealerLead(req.user.id,req.body||{})})}catch{res.status(400).json({error:'INVALID_LEAD'})}})
@@ -379,7 +621,76 @@ app.delete('/api/dealer/leads/:id',requireDealer,(req,res)=>{store.deleteDealerL
 app.get('/api/dealer/export.csv',requireDealer,(req,res)=>{const esc=value=>`"${String(value??'').replaceAll('"','""')}"`,rows=[['نوع','عنوان/نام','خودرو','سال','قیمت خرید/بودجه','قیمت هدف','وضعیت','تلفن'],...store.dealerInventory(req.user.id).map(item=>['موجودی',item.title,`${item.brand} ${item.model}`,item.year,item.buy_price,item.target_price,item.status,'']),...store.dealerLeads(req.user.id).map(item=>['مشتری',item.name,item.vehicle,'',item.budget,'',item.status,item.phone])];res.set({'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="khodroto-dealer.csv"'});res.send('\ufeff'+rows.map(row=>row.map(esc).join(',')).join('\n'))})
 
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
-app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))
+app.get('/api/admin/users',adminOnly,(req,res)=>{
+ const result=store.adminUsers({
+  query:String(req.query.query||'').slice(0,60),
+  role:String(req.query.role||''),
+  limit:Math.min(200,Math.max(1,Number(req.query.limit)||50)),
+  offset:Math.max(0,Number(req.query.offset)||0),
+ })
+ res.json(result)
+})
+
+// --- CSV export -------------------------------------------------------------
+// Every admin table was read-only on screen with no way to get the data out, so
+// any real analysis meant opening the SQLite file on the server.
+const csvCell=value=>{
+ const text=value===null||value===undefined?'':String(value)
+ return /[",\n;]/.test(text)?`"${text.replace(/"/g,'""')}"`:text
+}
+const toCsv=(columns,rows)=>[columns.map(col=>csvCell(col.label)).join(','),
+ ...rows.map(row=>columns.map(col=>csvCell(col.get(row))).join(','))].join('\n')
+
+const EXPORTS={
+ users:{
+  file:'users',
+  columns:[['شناسه',r=>r.id],['موبایل',r=>r.phone],['نام',r=>r.name],['نقش',r=>r.role],['پلن',r=>r.plan||'رایگان'],['تاریخ عضویت',r=>r.created_at]],
+  rows:()=>store.adminUsers({limit:200,offset:0}).items,
+ },
+ subscriptions:{
+  file:'subscriptions',
+  columns:[['شناسه',r=>r.id],['کاربر',r=>r.name||r.phone],['پلن',r=>r.plan],['وضعیت',r=>r.status],['مبلغ',r=>r.amount],['شروع',r=>r.started_at],['انقضا',r=>r.expires_at]],
+  rows:()=>store.adminSubscriptions(),
+ },
+ listings:{
+  file:'listings',
+  columns:[['توکن',r=>r.token],['عنوان',r=>r.title],['شهر',r=>r.city],['قیمت',r=>r.price],['امتیاز',r=>r.score],['دسته',r=>r.category],['وضعیت',r=>r.status],['آخرین مشاهده',r=>r.last_seen_at]],
+  rows:()=>store.adminListings(),
+ },
+}
+app.get('/api/admin/export/:kind',adminOnly,(req,res)=>{
+ const spec=EXPORTS[String(req.params.kind)]
+ if(!spec)return res.status(404).json({error:'UNKNOWN_EXPORT'})
+ const columns=spec.columns.map(([label,get])=>({label,get}))
+ // The BOM is what makes Excel open a UTF-8 Persian CSV without mojibake.
+ const body='\uFEFF'+toCsv(columns,spec.rows())
+ store.audit(req.user.id,'export',spec.file,'csv',{rows:body.split('\n').length-1})
+ res.set('Content-Type','text/csv; charset=utf-8')
+ res.set('Content-Disposition',`attachment; filename="khodroto-${spec.file}-${new Date().toISOString().slice(0,10)}.csv"`)
+ res.send(body)
+})
+
+// --- Manual reference prices -------------------------------------------------
+app.get('/api/admin/reference/manual',adminOnly,(_req,res)=>res.json({items:store.manualReferences()}))
+app.post('/api/admin/reference/manual',adminOnly,(req,res)=>{
+ const cohortKey=String(req.body?.cohortKey||'').trim()
+ const year=Number(req.body?.year)||0
+ const price=Math.round(Number(req.body?.price)||0)
+ if(!cohortKey||!year||price<=0)return res.status(400).json({error:'INVALID_REFERENCE'})
+ store.upsertManualReference({cohortKey,year,price,label:String(req.body?.label||'').slice(0,80),trim:String(req.body?.trim||'').slice(0,40)})
+ loadReferenceFromStore()
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'upsert','reference_manual',`${cohortKey}|${year}`,{price})
+ res.json({ok:true,items:store.manualReferences()})
+})
+app.delete('/api/admin/reference/manual',adminOnly,(req,res)=>{
+ const removed=store.deleteManualReference(String(req.query.cohortKey||''),Number(req.query.year)||0,String(req.query.trim||''))
+ if(!removed)return res.status(404).json({error:'NOT_FOUND'})
+ loadReferenceFromStore()
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'delete','reference_manual',String(req.query.cohortKey||''))
+ res.json({ok:true,items:store.manualReferences()})
+})
 app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);store.audit(req.user.id,'update_role','user',req.params.id,{role});res.json({ok:true})})
 app.get('/api/admin/subscriptions',adminOnly,(_req,res)=>res.json({items:store.adminSubscriptions()}))
 app.patch('/api/admin/subscriptions/:id',adminOnly,(req,res)=>{const status=['active','expired','cancelled','pending'].includes(req.body.status)?req.body.status:'pending';store.setSubscriptionStatus(Number(req.params.id),status);store.audit(req.user.id,'update_status','subscription',req.params.id,{status});res.json({ok:true})})
@@ -390,7 +701,54 @@ app.patch('/api/admin/listings/:token',adminOnly,(req,res)=>{const status=['acti
 app.get('/api/admin/plans',adminOnly,(_req,res)=>res.json({items:store.plans()}))
 app.patch('/api/admin/plans/:id',adminOnly,(req,res)=>{const items=store.savePlan(String(req.params.id),req.body||{});if(!items)return res.status(404).json({error:'NOT_FOUND'});store.audit(req.user.id,'update','plan',req.params.id);res.json({items})})
 app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
-app.patch('/api/admin/settings',adminOnly,(req,res)=>{const settings=store.updateSettings(req.body||{});store.audit(req.user.id,'update','settings','general');res.json({settings})})
+app.patch('/api/admin/settings',adminOnly,(req,res)=>{
+ const settings=store.updateSettings(req.body||{})
+ syncProviderOverrides()
+ // Scoring policy lives in settings now, so a saved change must invalidate the
+ // memoised analysis — otherwise retuning the band appears to do nothing for two
+ // minutes and the operator concludes the panel is broken.
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'update','settings','general')
+ res.json({settings})
+})
+
+// One place that answers "is the pipeline healthy, and what can I do about it?"
+// Every number here was already computed somewhere; none of it was reachable.
+app.get('/api/admin/health',adminOnly,(_req,res)=>{
+ const categories=['light','heavy','motorcycles']
+ const market=categories.map(category=>{
+  try{
+   const entry=marketAnalysis(category)
+   const tiers={}
+   for(const item of entry.items)tiers[item.tier||'unknown']=(tiers[item.tier||'unknown']||0)+1
+   return{category,listings:entry.items.length,hidden:entry.items.filter(item=>item.hidden).length,dealers:entry.items.filter(item=>item.dealer).length,models:entry.summary?.totalModels||0,tiers,duplicates:entry.dedupe?.removed||0}
+  }catch(error){return{category,error:error.message}}
+ })
+ let details=null
+ try{details=store.detailCache.stats()}catch{}
+ res.json({
+  integration:divar.status(),
+  market,
+  enrichment:details,
+  sources:{listings:providerStatuses(),reference:referenceStatuses()},
+  reference:{models:referenceIndex?.cohorts||0,...store.referenceMeta()},
+  policy:visibilityBand(visibilityPolicy()),
+  database:store.stats(),
+ })
+})
+
+// Sellers whose prices repeatedly fail the screen, for the admin table.
+// Daily series for the admin charts. Every number was already in the database and
+// only ever shown as a single lifetime total.
+app.get('/api/admin/analytics',adminOnly,(req,res)=>{
+ const days=Math.min(180,Math.max(7,Number(req.query.days)||30))
+ res.json(store.analyticsSeries(days))
+})
+
+app.get('/api/admin/sellers',adminOnly,(req,res)=>{
+ const limit=Math.min(200,Math.max(1,Number(req.query.limit)||50))
+ res.json({items:store.worstSellers(limit),minAds:sellerPublicMin()})
+})
 app.get('/api/admin/slides',adminOnly,(_req,res)=>res.json({items:store.slides()}))
 app.post('/api/admin/slides',adminOnly,(req,res)=>{try{const items=store.saveSlide(req.body||{});store.audit(req.user.id,'create','slide','',{title:req.body?.title});res.status(201).json({items})}catch{res.status(400).json({error:'INVALID_SLIDE'})}})
 app.patch('/api/admin/slides/:id',adminOnly,(req,res)=>{try{const items=store.saveSlide(req.body||{},Number(req.params.id));store.audit(req.user.id,'update','slide',req.params.id,{title:req.body?.title});res.json({items})}catch{res.status(400).json({error:'INVALID_SLIDE'})}})
@@ -458,15 +816,77 @@ function marketAnalysis(category){
  // Step 2 — build one price index and reuse it for both scoring and the summary,
  // so a listing is always judged against exactly the averages we publish.
  const priceIndex=buildPriceIndex(payloads,{categoryHint:category,windowDays:MARKET_WINDOW_DAYS,reference:referenceIndex})
- const analysis=analyzeListings(payloads,{category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,priceIndex,reference:referenceIndex})
+ const analysis=analyzeListings(payloads,{category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,priceIndex,reference:referenceIndex,policy:visibilityPolicy()})
  const items=analysis.items
  if(priceIndex.stats?.rejected||priceIndex.stats?.review)console.log(`[screen] ${category}: ${priceIndex.stats.rejected} rejected, ${priceIndex.stats.review} needs-review of ${priceIndex.stats.screened} listings`)
  const summary=summarizeMarket(payloads,{category,windowDays:MARKET_WINDOW_DAYS})
  const byModel=new Map(summary.models.map(model=>[model.model,model]))
  const entry={signature,stamp:Date.now(),items,summary,byModel,priceIndex,dedupe:dedupeStats}
  try{recordSellerReputation(items)}catch(error){console.warn(`[sellers] ${error.message}`)}
+ // Attach each seller's track record to their listings. A showroom whose ads keep
+ // failing the price screen should not look identical to a first-time private
+ // seller, and this is the only signal a buyer cannot get from the ad itself.
+ try{attachSellerReputation(items)}catch(error){console.warn(`[sellers:attach] ${error.message}`)}
  marketAnalysisCache.set(category,entry)
  return entry
+}
+
+// Minimum ads before a seller's record is shown publicly. Below this a single bad
+// ad would brand someone a fraudster, which is both unfair and legally risky.
+const sellerPublicMin=()=>{const fromSettings=Number(store.settings().seller_reputation_min_ads);if(Number.isFinite(fromSettings)&&fromSettings>0)return fromSettings;return Number(process.env.SELLER_REPUTATION_MIN_ADS)||5}
+/**
+ * The visibility band as the operator configured it in the admin panel, falling
+ * back to the environment and then to the defaults. Tuning the single most
+ * important policy in the product should not require SSH access to a .env file.
+ */
+// Push the panel's source toggles into the provider registry. Called at boot and
+// after every settings save so a flipped switch takes effect on the next crawl.
+function syncProviderOverrides(){
+ const settings=store.settings()
+ const overrides={}
+ for(const [settingKey,envKey] of Object.entries({
+  source_bama:'BAMA_ENABLED',source_sheypoor:'SHEYPOOR_ENABLED',source_ring:'RING_ENABLED',
+  source_khodro45:'KHODRO45_ENABLED',source_hamrahmechanic:'HAMRAH_LISTINGS_ENABLED',
+ })){
+  const value=settings[settingKey]
+  if(value==='true'||value==='false')overrides[envKey]=value
+ }
+ setProviderOverrides(overrides)
+ return overrides
+}
+
+function visibilityPolicy(){
+ const settings=store.settings()
+ const pick=(settingKey,envKey)=>{
+  const value=Number(settings[settingKey])
+  return Number.isFinite(value)&&value>0?String(value):process.env[envKey]
+ }
+ return {
+  OPPORTUNITY_MIN_DISCOUNT:pick('opportunity_min_discount','OPPORTUNITY_MIN_DISCOUNT'),
+  OPPORTUNITY_MAX_DISCOUNT:pick('opportunity_max_discount','OPPORTUNITY_MAX_DISCOUNT'),
+  HIDE_DEALER_ADS:settings.hide_dealer_ads==='false'?'false':process.env.HIDE_DEALER_ADS==='false'?'false':'true',
+ }
+}
+
+function attachSellerReputation(items){
+ const cache=new Map(),minAds=sellerPublicMin()
+ for(const item of items){
+  const key=item.sellerKey
+  if(!key)continue
+  if(!cache.has(key))cache.set(key,store.sellerReputation(key))
+  const row=cache.get(key)
+  if(!row||row.listings<minAds)continue
+  const rejectRate=row.listings?row.rejected/row.listings:0
+  item.seller={
+   name:item.sellerName||row.label||'فروشنده',
+   listings:row.listings,
+   flagged:row.rejected+row.review,
+   rejectRate:Number(rejectRate.toFixed(2)),
+   grade:rejectRate>=0.3?'bad':rejectRate>=0.1?'mixed':'good',
+   label:rejectRate>=0.3?'سابقهٔ قیمت‌گذاری نامعتبر':rejectRate>=0.1?'چند آگهی مشکوک در سابقه':'سابقهٔ تمیز',
+  }
+ }
+ return items
 }
 
 // Aggregate how trustworthy each seller's prices are. A dealer whose listings are
@@ -544,7 +964,10 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
   try {
     const filters=searchFilters(req.query);if(!canViewRisk)filters.suspiciousOnly=false
     const offset = Math.max(0, Number(req.query.offset) || 0)
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
+    // The free-tier cap has to live HERE. It was only ever applied in the UI, which
+    // asked for six results — so `?limit=200&offset=0` handed any visitor the whole
+    // board and the subscription was decorative. The setting is now authoritative.
+    const limit = Math.min(planResultCap(canViewRisk), Math.max(1, Number(req.query.limit) || 6))
     // Serve instantly from the SQLite market database whenever possible; the background
     // warm-up loop keeps it fresh. Falling back to a live Divar crawl is slow (full
     // category sweeps fetch hundreds of pages) and made search feel broken.
@@ -553,17 +976,26 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
     const entry=marketAnalysis(filters.category)
     const stored=filterListingItems(applyBudget(entry.items, String(req.query.budget||'')), filters)
     const storedFiltered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? stored.filter(item=>item.suspicious) : stored
-    if(storedFiltered.length){
+    // Hidden listings (dealer bait, >30% under market, failed fraud screen) are kept
+    // out of the default feed for everyone and only returned on explicit opt-in.
+    const visible=applyVisibility(storedFiltered,req.query)
+    // Paging is itself a paid feature: clamping the offset instead of zeroing it
+    // would still let a free viewer walk a window across the list and collect more
+    // than the cap. They always get the head of the ranking.
+    const windowStart=canViewRisk?offset:0
+    if(visible.items.length){
       res.set('Cache-Control', 'private, max-age=60')
-      return res.json({ source:'db', category:filters.category, items:storedFiltered.slice(offset,offset+limit).map(publicListing), totalMatches:storedFiltered.length, offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(storedFiltered,entry), integration:divar.status() })
+      return res.json({ source:'db', category:filters.category, items:visible.items.slice(windowStart,windowStart+limit).map(publicListing), totalMatches:visible.items.length, hiddenCount:visible.hiddenCount, dealerCount:visible.dealerCount, showingHidden:visible.showingHidden, visibilityBand:visibilityBand(visibilityPolicy()), offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(visible.items,entry), integration:divar.status() })
     }
-    const result = await divar.listings(filters)
-    if (!result.cached) await persistCrawl(result)
+    // foreground:true → bounded crawl so the visitor waits seconds, not minutes.
+    const result = await divar.listings(filters, { foreground: true })
+    if (!result.cached) await persistCrawl(result, { verifyMissing: !result.partial })
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
+    const live=applyVisibility(filtered,req.query)
     res.set('Cache-Control', 'private, max-age=60')
-    res.json({ ...publicResult, items: filtered.slice(offset, offset + limit).map(publicListing), totalMatches: filtered.length, offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
+    res.json({ ...publicResult, items: live.items.slice(canViewRisk?offset:0, (canViewRisk?offset:0) + limit).map(publicListing), totalMatches: live.items.length, hiddenCount:live.hiddenCount, dealerCount:live.dealerCount, showingHidden:live.showingHidden, visibilityBand:visibilityBand(visibilityPolicy()), offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
   } catch (error) {
     const known = error instanceof DivarUpstreamError
     console.warn(`[divar:${error.provider || 'none'}] ${error.code || 'ERROR'}: ${error.message}`)
@@ -583,8 +1015,8 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
 const warmMarketCache = () => refreshConfiguredMarket().then(result=>console.log(`[divar] refreshed ${result.total} listings across ${result.cities||0} cities and ${result.scopes||0} categories`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+syncProviderOverrides()
 loadReferenceFromStore()
-try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
 
 // Reference sources publish a few times a day, so polling every couple of minutes
 // would only burn their bandwidth and risk a block. 15 minutes keeps us current
@@ -593,16 +1025,49 @@ const referenceIntervalMs=Math.max(5,Number(process.env.REFERENCE_REFRESH_MINUTE
 const warmReference=()=>refreshReferencePrices()
  .then(result=>console.log(`[reference] refreshed ${result.rows} prices across ${result.models} models`))
  .catch(error=>console.warn(`[reference:warmup] ${error.message}`))
-if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
 
-warmMarketCache()
-setInterval(warmMarketCache, cacheTtl).unref()
+// Everything below is startup WORK, not startup REQUIREMENTS. Running it before
+// app.listen() meant the process spent its first minutes rebuilding baselines and
+// sweeping Divar while the port was not even open yet — the visitor who arrived in
+// that window simply waited. The server now listens first and warms afterwards.
+function startBackgroundWork(){
+ try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
+ if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
+ warmMarketCache()
+ setInterval(warmMarketCache, cacheTtl).unref()
+}
 
 // Serve the compiled SPA directly. Avoiding Vite middleware keeps the preview on
 // one unambiguous port; all client-side routes fall back to index.html.
 if(process.env.PREVIEW_ROUTE&&process.env.NODE_ENV!=='production')app.get('/',(_req,res)=>res.redirect(process.env.PREVIEW_ROUTE))
 app.get('/admin',(_req,res)=>res.redirect(302,'/khodroto-admin'))
 const dist = path.resolve('dist')
+
+// An unknown /api/* path used to fall through to the SPA and answer 200 with HTML.
+// A caller then got a parse error instead of a 404, a mistyped endpoint looked
+// healthy to monitoring, and nothing distinguished "route gone" from "page".
+app.use('/api', (req, res) => res.status(404).json({ error: 'NOT_FOUND', path: req.originalUrl }))
+
+// A malformed body or an oversized upload is the client's mistake, not a server
+// fault. Express's default handler prints a full stack for each one, which buries
+// the failures that actually matter in production logs.
+app.use((error, req, res, _next) => {
+  const status = Number(error?.status || error?.statusCode) || 500
+  const clientFault = status >= 400 && status < 500
+  if (clientFault) console.warn(`[http] ${status} ${req.method} ${req.originalUrl} — ${error.type || error.message}`)
+  else console.error(`[http] 500 ${req.method} ${req.originalUrl}`, error)
+  if (res.headersSent) return
+  const body = clientFault
+    ? { error: error.type === 'entity.too.large' ? 'PAYLOAD_TOO_LARGE' : 'BAD_REQUEST' }
+    : { error: 'INTERNAL_ERROR' }
+  res.status(status).json(body)
+})
+
 app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
 app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
-app.listen(PORT, '0.0.0.0', () => console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`))
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Khodroto running on http://0.0.0.0:${PORT} · Divar provider: ${divar.status().provider}`)
+  // One tick after the port is open, so the first request is never queued behind
+  // the baseline rebuild. STARTUP_WARM=false disables it for tests and CI.
+  if(process.env.STARTUP_WARM!=='false')setTimeout(startBackgroundWork,100).unref?.()
+})

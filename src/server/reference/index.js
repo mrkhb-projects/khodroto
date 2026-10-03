@@ -88,6 +88,9 @@ export const referenceStatuses = () => [...lastStatus.values()]
  * Build the in-memory lookup used during scoring.
  * `rows` may come straight from collectReferencePrices() or from the DB cache.
  */
+/** Rows an operator entered by hand; they override whatever a scraper found. */
+export const MANUAL_SOURCE = 'manual'
+
 export function buildReferenceIndex(rows = []) {
   const byCohortYear = new Map()   // `${cohortKey}|${year}` → {price, sources}
   const byCohort = new Map()       // cohortKey → {min, max, years:Map, label}
@@ -100,14 +103,23 @@ export function buildReferenceIndex(rows = []) {
 
     const slot = `${cohortKey}|${year}`
     const existing = byCohortYear.get(slot)
-    // Several sources may price the same car; keep the median-ish middle by
-    // averaging, which also smooths a single mis-parsed row.
-    if (existing) {
+    const source = row.source || 'unknown'
+    // A price an operator typed in by hand is authoritative. The point of the
+    // manual override is to correct a source that has started parsing garbage, so
+    // averaging it back together with that garbage would defeat it.
+    const manual = source === MANUAL_SOURCE
+    if (existing && manual) {
+      existing.price = price
+      existing.manual = true
+      existing.sources.add(source)
+    } else if (existing && !existing.manual) {
+      // Several sources may price the same car; averaging keeps the middle and
+      // smooths a single mis-parsed row.
       existing.samples += 1
       existing.price = Math.round((existing.price * (existing.samples - 1) + price) / existing.samples)
-      existing.sources.add(row.source || 'unknown')
-    } else {
-      byCohortYear.set(slot, { cohortKey, year, price, samples: 1, sources: new Set([row.source || 'unknown']), label: row.label || '' })
+      existing.sources.add(source)
+    } else if (!existing) {
+      byCohortYear.set(slot, { cohortKey, year, price, samples: 1, manual, sources: new Set([source]), label: row.label || '' })
     }
 
     if (!byCohort.has(cohortKey)) byCohort.set(cohortKey, { cohortKey, label: row.label || '', min: price, max: price, years: new Map() })

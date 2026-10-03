@@ -8,41 +8,58 @@ import { hamrahMechanicListings } from './hamrahmechanic.js'
 // with environment variables, so the proven Divar flow stays the default everywhere.
 //   BAMA_ENABLED=true · SHEYPOOR_ENABLED=true · RING_ENABLED=true
 //   KHODRO45_ENABLED=true · HAMRAH_LISTINGS_ENABLED=true
+// Resolution order for a toggle: the admin panel's setting wins when it is set at
+// all, then the environment variable, then off. Operators should not need SSH to
+// turn a source on, but a host that pins a variable must still be able to.
+let overrides = {}
+export function setProviderOverrides(next = {}) { overrides = next || {} }
+const flag = (key, env = process.env) => {
+  const override = overrides[key]
+  if (override === true || override === 'true') return true
+  if (override === false || override === 'false') return false
+  return env[key] === 'true'
+}
+
 const PROVIDERS = {
   bama: {
     name: 'باما',
-    enabled: () => process.env.BAMA_ENABLED === 'true',
+    envKey: 'BAMA_ENABLED',
+    enabled: () => flag('BAMA_ENABLED'),
     categories: ['light', 'motorcycles', 'heavy'],
     fetch: bamaListings,
   },
   sheypoor: {
     name: 'شیپور',
-    enabled: () => process.env.SHEYPOOR_ENABLED === 'true',
+    envKey: 'SHEYPOOR_ENABLED',
+    enabled: () => flag('SHEYPOOR_ENABLED'),
     categories: ['light', 'motorcycles'],
     fetch: sheypoorListings,
   },
   ring: {
     name: 'رینگ',
-    enabled: () => process.env.RING_ENABLED === 'true',
+    envKey: 'RING_ENABLED',
+    enabled: () => flag('RING_ENABLED'),
     categories: ['light'],
     fetch: ringListings,
   },
   khodro45: {
     name: 'خودرو ۴۵',
-    enabled: () => process.env.KHODRO45_ENABLED === 'true',
+    envKey: 'KHODRO45_ENABLED',
+    enabled: () => flag('KHODRO45_ENABLED'),
     categories: ['light', 'motorcycles'],
     fetch: khodro45Listings,
   },
   hamrahmechanic: {
     name: 'همراه مکانیک',
-    enabled: () => process.env.HAMRAH_LISTINGS_ENABLED === 'true',
+    envKey: 'HAMRAH_LISTINGS_ENABLED',
+    enabled: () => flag('HAMRAH_LISTINGS_ENABLED'),
     categories: ['light'],
     fetch: hamrahMechanicListings,
   },
 }
 
 export const providerCatalogue = () => Object.entries(PROVIDERS).map(([key, provider]) => ({
-  key, name: provider.name, categories: provider.categories, enabled: provider.enabled(),
+  key, name: provider.name, envKey: provider.envKey, categories: provider.categories, enabled: provider.enabled(),
 }))
 
 const status = new Map() // provider → {ok, items, note, lastRun}
@@ -69,6 +86,7 @@ export function providerStatuses() {
   return Object.entries(PROVIDERS).map(([key, provider]) => ({
     key,
     name: provider.name,
+    envKey: provider.envKey,
     enabled: provider.enabled(),
     categories: provider.categories,
     ...(status.get(key) || { ok: null, items: 0, note: '‍هنوز اجرا نشده است', lastRun: null }),
