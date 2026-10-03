@@ -224,12 +224,54 @@ function readDetailFields(detail) {
   return result
 }
 
+/**
+ * Find the business/showroom identity inside a Divar detail payload.
+ *
+ * WHY A DEEP SCAN
+ * Seller reputation has been recorded against `item.sellerKey` since the platform
+ * shipped, but nothing ever produced that field, so the table stayed empty and the
+ * whole feature was dead code. Divar exposes the shop behind an ad in more than one
+ * widget shape and has changed it before, so instead of hard-coding one path we
+ * look for any business-ish identifier and take the first stable one.
+ *
+ * Returns null when the ad is from a private seller — which must stay the common
+ * case. A reputation we cannot attribute is worse than no reputation at all.
+ */
+export function extractSellerIdentity(detail) {
+  if (!detail || typeof detail !== 'object') return null
+  const idKeys = /^(business_ref|business_slug|business_token|shop_slug|shop_id|business_id)$/i
+  const nameKeys = /^(business_name|shop_name|brand_name)$/i
+  let id = '', name = ''
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 8) return
+    if (Array.isArray(node)) { for (const child of node) walk(child, depth + 1); return }
+    for (const [key, value] of Object.entries(node)) {
+      if (typeof value === 'string' && value.trim()) {
+        if (!id && idKeys.test(key)) id = value.trim()
+        if (!name && nameKeys.test(key)) name = value.trim()
+      }
+      // Nested business object: { business_data: { slug, name } }
+      if (value && typeof value === 'object' && /business|shop/i.test(key)) {
+        if (!id && typeof value.slug === 'string') id = value.slug.trim()
+        if (!id && typeof value.id === 'string') id = value.id.trim()
+        if (!name && typeof value.name === 'string') name = value.name.trim()
+        if (!name && typeof value.title === 'string') name = value.title.trim()
+      }
+      walk(value, depth + 1)
+    }
+  }
+  walk(detail)
+  if (!id && !name) return null
+  return { key: `divar-business:${(id || name).slice(0, 80)}`, name: name || id }
+}
+
 async function enrichWebItem(item, env, fetchImpl) {
   try {
     const detail = await jsonRequest(`${webApiBase(env)}/v8/posts-v2/web/${encodeURIComponent(item.token)}`, {
       method: 'GET', provider: 'web', headers: webHeaders(env),
     }, fetchImpl)
     const fields = readDetailFields(detail)
+    const seller = extractSellerIdentity(detail)
     return {
       ...item,
       ...fields,
@@ -240,6 +282,7 @@ async function enrichWebItem(item, env, fetchImpl) {
       year: fields.year || item.year || 0,
       color: fields.color !== '—' ? fields.color : (item.color || '—'),
       price: parseNumber(detail.webengage?.price) || item.price,
+      ...(seller ? { sellerKey: seller.key, sellerName: seller.name } : {}),
       enriched: true,
     }
   } catch {
@@ -292,7 +335,7 @@ export async function enrichListings(rows, {
       // tokens — the queue never advanced and most listings were never enriched at
       // all, which is why mileage stayed «نامشخص» site-wide.
       if (!result.enrichFailed) {
-        cache?.set?.(item.token, { color: result.color, km: result.km, year: result.year })
+        cache?.set?.(item.token, { color: result.color, km: result.km, year: result.year, sellerKey: result.sellerKey || '', sellerName: result.sellerName || '' })
       }
       if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs))
     }

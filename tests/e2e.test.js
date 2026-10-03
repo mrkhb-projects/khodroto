@@ -237,6 +237,43 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · seller tools', () => {
+  it('serves the value-estimate page', async () => {
+    const response = await get('/estimate')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+  })
+
+  it('estimates a car the seeded market knows', async () => {
+    const response = await get('/api/market/estimate?title=' + encodeURIComponent('پژو ۲۰۷ اتوماتیک') + '&year=1401&km=80000')
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data.ok).toBe(true)
+    expect(data.estimate).toBeGreaterThan(0)
+    expect(data.range.high).toBeGreaterThan(data.range.low)
+  })
+
+  it('says so plainly instead of guessing an unknown model', async () => {
+    const response = await get('/api/market/estimate?title=' + encodeURIComponent('خودروی ناشناخته'))
+    expect(response.status).toBe(404)
+    const data = await response.json()
+    expect(data.ok).toBe(false)
+    expect(typeof data.message).toBe('string')
+  })
+})
+
+describe('e2e · alerts require a signed-in user', () => {
+  it('rejects anonymous reads and writes rather than leaking', async () => {
+    expect((await get('/api/alerts')).status).toBe(401)
+    const created = await get('/api/alerts', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'x', filters: {} }),
+    })
+    expect(created.status).toBe(401)
+    expect((await get('/api/alerts/1', { method: 'DELETE' })).status).toBe(401)
+  })
+})
+
 describe('e2e · resilience', () => {
   it('returns JSON errors, not HTML, for bad API input', async () => {
     const response = await get('/api/market/trend')

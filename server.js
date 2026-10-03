@@ -190,8 +190,36 @@ app.get('/api/auth/me',(req,res)=>res.json({user:store.userFromToken(cookieToken
 app.post('/api/auth/logout',(req,res)=>{store.logout(cookieToken(req));res.setHeader('Set-Cookie','khodroto_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0');res.json({ok:true})})
 app.patch('/api/user',requireUser,(req,res)=>res.json({user:store.updateUser(req.user.id,{name:String(req.body.name||req.user.name).slice(0,80),city:String(req.body.city||req.user.city).slice(0,20)})}))
 app.get('/api/alerts',requireUser,(req,res)=>res.json({items:store.alerts(req.user.id)}))
-app.post('/api/alerts',requireUser,(req,res)=>{store.createAlert(req.user.id,{title:String(req.body.title||'هشدار خودرو').slice(0,100),filters:req.body.filters||{}});res.status(201).json({ok:true})})
+// A saved alert is the product's sharpest edge: a real opportunity is gone within
+// hours, so being told first is what the subscription actually sells. The matcher
+// in alerts.js was complete; what was missing was the user ever creating one.
+const ALERT_LIMIT=Number(process.env.MAX_ALERTS_PER_USER)||20
+const ALERT_FILTER_KEYS=['category','query','queryText','city','cityNames','minPrice','maxPrice','minYear','maxYear','maxUsage','brand','model','color','gearbox','body']
+const cleanAlertFilters=input=>{
+ const source=input&&typeof input==='object'?input:{}
+ const out={}
+ for(const key of ALERT_FILTER_KEYS){
+  const value=source[key]
+  if(value===undefined||value===null||value==='')continue
+  if(Array.isArray(value)){const list=value.map(entry=>String(entry).slice(0,60)).filter(Boolean).slice(0,30);if(list.length)out[key]=list;continue}
+  if(typeof value==='number'){if(Number.isFinite(value))out[key]=value;continue}
+  const text=String(value).slice(0,80)
+  if(text&&!text.startsWith('همه'))out[key]=text
+ }
+ return out
+}
+app.post('/api/alerts',requireUser,(req,res)=>{
+ if(store.countAlerts(req.user.id)>=ALERT_LIMIT)return res.status(409).json({error:'ALERT_LIMIT_REACHED',limit:ALERT_LIMIT})
+ const title=String(req.body?.title||'').trim().slice(0,100)||'هشدار خودرو'
+ store.createAlert(req.user.id,{title,filters:cleanAlertFilters(req.body?.filters)})
+ res.status(201).json({ok:true,items:store.alerts(req.user.id)})
+})
 app.patch('/api/alerts/:id',requireUser,(req,res)=>{store.toggleAlert(req.user.id,Number(req.params.id),Boolean(req.body.enabled));res.json({ok:true})})
+app.delete('/api/alerts/:id',requireUser,(req,res)=>{
+ const removed=store.deleteAlert(req.user.id,Number(req.params.id))
+ if(!removed)return res.status(404).json({error:'ALERT_NOT_FOUND'})
+ res.json({ok:true})
+})
 app.post('/api/support',requireUser,(req,res)=>{store.createTicket(req.user.id,{subject:String(req.body.subject||'پشتیبانی').slice(0,100),message:String(req.body.message||'').slice(0,2000)});res.status(201).json({ok:true})})
 app.post('/api/contact',(req,res)=>{const key=req.ip||'unknown',stamp=Date.now(),recent=(contactAttempts.get(key)||[]).filter(time=>stamp-time<600000);if(recent.length>=5)return res.status(429).json({error:'RATE_LIMITED'});const name=String(req.body?.name||'').trim().slice(0,80),contact=String(req.body?.contact||'').trim().slice(0,120),subject=String(req.body?.subject||'').trim().slice(0,100),message=String(req.body?.message||'').trim().slice(0,2000);if(name.length<2||contact.length<5||subject.length<2||message.length<10)return res.status(400).json({error:'INVALID_INPUT'});contactAttempts.set(key,[...recent,stamp]);store.createTicket(null,{subject:`${subject} — ${name}`,message:`راه ارتباطی: ${contact}\n\n${message}`});res.status(201).json({ok:true})})
 
@@ -488,8 +516,36 @@ function marketAnalysis(category){
  const byModel=new Map(summary.models.map(model=>[model.model,model]))
  const entry={signature,stamp:Date.now(),items,summary,byModel,priceIndex,dedupe:dedupeStats}
  try{recordSellerReputation(items)}catch(error){console.warn(`[sellers] ${error.message}`)}
+ // Attach each seller's track record to their listings. A showroom whose ads keep
+ // failing the price screen should not look identical to a first-time private
+ // seller, and this is the only signal a buyer cannot get from the ad itself.
+ try{attachSellerReputation(items)}catch(error){console.warn(`[sellers:attach] ${error.message}`)}
  marketAnalysisCache.set(category,entry)
  return entry
+}
+
+// Minimum ads before a seller's record is shown publicly. Below this a single bad
+// ad would brand someone a fraudster, which is both unfair and legally risky.
+const SELLER_PUBLIC_MIN=Number(process.env.SELLER_REPUTATION_MIN_ADS)||5
+function attachSellerReputation(items){
+ const cache=new Map()
+ for(const item of items){
+  const key=item.sellerKey
+  if(!key)continue
+  if(!cache.has(key))cache.set(key,store.sellerReputation(key))
+  const row=cache.get(key)
+  if(!row||row.listings<SELLER_PUBLIC_MIN)continue
+  const rejectRate=row.listings?row.rejected/row.listings:0
+  item.seller={
+   name:item.sellerName||row.label||'فروشنده',
+   listings:row.listings,
+   flagged:row.rejected+row.review,
+   rejectRate:Number(rejectRate.toFixed(2)),
+   grade:rejectRate>=0.3?'bad':rejectRate>=0.1?'mixed':'good',
+   label:rejectRate>=0.3?'سابقهٔ قیمت‌گذاری نامعتبر':rejectRate>=0.1?'چند آگهی مشکوک در سابقه':'سابقهٔ تمیز',
+  }
+ }
+ return items
 }
 
 // Aggregate how trustworthy each seller's prices are. A dealer whose listings are

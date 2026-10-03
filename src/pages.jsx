@@ -178,11 +178,88 @@ const parsePairs=(value,fallback)=>{const rows=parseLines(value).map(line=>line.
 const brands=['همه برندها','ایران خودرو','سایپا','پژو','سمند','دنا','تارا','کوییک','شاهین','مدیران خودرو','کرمان موتور','هیوندای','کیا','تویوتا']
 
 function ListingCard({car,onSave,settings}){const [compared,setCompared]=useState(()=>isCompared(car.id));const key=`khodroto:saved:${car.id}`, [saved,setSaved]=useState(()=>localStorage.getItem(key)!==null);function toggle(){const next=!saved;setSaved(next);next?localStorage.setItem(key,JSON.stringify(car)):localStorage.removeItem(key);onSave?.(next?'به ذخیره‌ها اضافه شد':'از ذخیره‌ها حذف شد')}
-return <article className={`result-card card-style-${cardStyleFor(car,settings)}`}><div className="result-image"><img src={car.image||'/khodroto-hero.jpg'} alt={car.title}/><button className={saved?'saved':''} onClick={toggle}><Heart fill={saved?'currentColor':'none'}/></button><span>{car.freshness||'تازه'}</span></div><div className="result-content"><div className="result-title"><div><small><MapPin/> {car.city}</small><h3>{car.title}</h3><TierBadge car={car}/></div><div style={scoreStyle(car.score)} className={'mini-score '+(car.suspicious?'suspicious':'')}>{car.suspicious?'!':car.score==null?'—':num(car.score)}</div></div><div className="result-specs"><span>{car.year?`مدل ${num(car.year)}`:'سال نامشخص'}</span><span>{car.km?`${num(car.km)} کیلومتر`:'کارکرد نامشخص'}</span><span>{car.color||'—'}</span></div>{car.hidden?<div className="result-risk danger">{car.dealer?'آگهی شرکتی/نمایشگاهی':'آگهی مشکوک'}: {car.hiddenReason||car.priceWarnings?.[0]||'این مبلغ قیمت کامل خودرو نیست'}{car.referencePrice>0&&<small>قیمت مرجع بازار: {toman(car.referencePrice)} میلیون تومان</small>}</div>:car.trust==='reject'?<div className="result-risk danger">قیمت غیرواقعی: {car.priceWarnings?.[0]||'این مبلغ قیمت کامل خودرو نیست'}{car.referencePrice>0&&<small>قیمت مرجع بازار: {toman(car.referencePrice)} میلیون تومان</small>}</div>:car.trust==='review'?<div className="result-risk caution">نیازمند بررسی: {car.priceWarnings?.[0]||'قیمت با بازار هم‌خوان نیست'}</div>:car.suspicious?<div className="result-risk">مشکوک: {car.riskFlags?.[0]||'قیمت خارج از محدوده بازار'}</div>:null}<div className="result-price"><div><small>قیمت آگهی</small><b>{car.price?`${toman(car.price)} میلیون تومان`:(car.priceText||'توافقی')}</b></div>{car.market>0?<span>{num(Math.max(0,car.discount))}٪ زیر بازار</span>:<span className="no-market">داده بازار کافی نیست</span>}</div><div className="result-market"><small>میانگین بازار {car.marketLevelLabel?`(${car.marketLevelLabel})`:''}</small><b>{car.market>0?`${toman(car.market)} میلیون`:'—'}</b><small>{car.marketSamples>0?`${num(car.marketSamples)} نمونه`:''}</small></div>{car.referencePrice>0&&car.trust!=='reject'&&<div className="result-reference"><small>قیمت مرجع بازار</small><b>{toman(car.referencePrice)} میلیون</b></div>}{car.alsoOn?.length>0&&<div className="result-alsoon">این خودرو در {num(car.alsoOn.length+1)} سایت آگهی شده: {car.alsoOn.join('، ')}</div>}<WhyScore car={car}/>{settings?.feature_comparison!=='false'&&<button className={`compare-card-button ${compared?'active':''}`} onClick={()=>{const result=toggleCompared(car);setCompared(isCompared(car.id));onSave?.(result.full?'حداکثر چهار خودرو قابل مقایسه است.':result.added?'به مقایسه اضافه شد.':'از مقایسه حذف شد.')}}><GitCompareArrows/>{compared?'انتخاب‌شده برای مقایسه':'افزودن به مقایسه'}</button>}<a href={car.link} target="_blank" rel="noreferrer">مشاهده در دیوار <ArrowUpLeft/></a></div></article>}
+return <article className={`result-card card-style-${cardStyleFor(car,settings)}`}><div className="result-image"><img src={car.image||'/khodroto-hero.jpg'} alt={car.title}/><button className={saved?'saved':''} onClick={toggle}><Heart fill={saved?'currentColor':'none'}/></button><span>{car.freshness||'تازه'}</span></div><div className="result-content"><div className="result-title"><div><small><MapPin/> {car.city}</small><h3>{car.title}</h3><TierBadge car={car}/></div><div style={scoreStyle(car.score)} className={'mini-score '+(car.suspicious?'suspicious':'')}>{car.suspicious?'!':car.score==null?'—':num(car.score)}</div></div><div className="result-specs"><span>{car.year?`مدل ${num(car.year)}`:'سال نامشخص'}</span><span>{car.km?`${num(car.km)} کیلومتر`:'کارکرد نامشخص'}</span><span>{car.color||'—'}</span></div>{car.hidden?<div className="result-risk danger">{car.dealer?'آگهی شرکتی/نمایشگاهی':'آگهی مشکوک'}: {car.hiddenReason||car.priceWarnings?.[0]||'این مبلغ قیمت کامل خودرو نیست'}{car.referencePrice>0&&<small>قیمت مرجع بازار: {toman(car.referencePrice)} میلیون تومان</small>}</div>:car.trust==='reject'?<div className="result-risk danger">قیمت غیرواقعی: {car.priceWarnings?.[0]||'این مبلغ قیمت کامل خودرو نیست'}{car.referencePrice>0&&<small>قیمت مرجع بازار: {toman(car.referencePrice)} میلیون تومان</small>}</div>:car.trust==='review'?<div className="result-risk caution">نیازمند بررسی: {car.priceWarnings?.[0]||'قیمت با بازار هم‌خوان نیست'}</div>:car.suspicious?<div className="result-risk">مشکوک: {car.riskFlags?.[0]||'قیمت خارج از محدوده بازار'}</div>:null}<div className="result-price"><div><small>قیمت آگهی</small><b>{car.price?`${toman(car.price)} میلیون تومان`:(car.priceText||'توافقی')}</b></div>{car.market>0?<span>{num(Math.max(0,car.discount))}٪ زیر بازار</span>:<span className="no-market">داده بازار کافی نیست</span>}</div><div className="result-market"><small>میانگین بازار {car.marketLevelLabel?`(${car.marketLevelLabel})`:''}</small><b>{car.market>0?`${toman(car.market)} میلیون`:'—'}</b><small>{car.marketSamples>0?`${num(car.marketSamples)} نمونه`:''}</small></div>{car.referencePrice>0&&car.trust!=='reject'&&<div className="result-reference"><small>قیمت مرجع بازار</small><b>{toman(car.referencePrice)} میلیون</b></div>}{car.alsoOn?.length>0&&<div className="result-alsoon">این خودرو در {num(car.alsoOn.length+1)} سایت آگهی شده: {car.alsoOn.join('، ')}</div>}{car.seller&&<div className={`seller-record seller-${car.seller.grade}`}><Store/><span><b>{car.seller.name}</b><small>{car.seller.label} · {num(car.seller.listings)} آگهی{car.seller.flagged>0?` · ${num(car.seller.flagged)} مورد مشکوک`:''}</small></span></div>}<WhyScore car={car}/>{settings?.feature_comparison!=='false'&&<button className={`compare-card-button ${compared?'active':''}`} onClick={()=>{const result=toggleCompared(car);setCompared(isCompared(car.id));onSave?.(result.full?'حداکثر چهار خودرو قابل مقایسه است.':result.added?'به مقایسه اضافه شد.':'از مقایسه حذف شد.')}}><GitCompareArrows/>{compared?'انتخاب‌شده برای مقایسه':'افزودن به مقایسه'}</button>}<a href={car.link} target="_blank" rel="noreferrer">مشاهده در دیوار <ArrowUpLeft/></a></div></article>}
 
 const fa2en=value=>String(value||'').replace(/[۰-۹]/g,d=>'۰۱۲۳۴۵۶۷۸۹'.indexOf(d))
 const digitsOnly=value=>fa2en(value).replace(/\D/g,'')
 function Range({label,minName,maxName,filters,setFilters,placeholder1,placeholder2}){return <div className="filter-group"><b>{label}</b><div className="range-inputs"><input inputMode="numeric" placeholder={placeholder1} value={filters[minName]||''} onChange={e=>setFilters({...filters,[minName]:digitsOnly(e.target.value)})}/><span>تا</span><input inputMode="numeric" placeholder={placeholder2} value={filters[maxName]||''} onChange={e=>setFilters({...filters,[maxName]:digitsOnly(e.target.value)})}/></div></div>}
+
+// «ماشین من چند می‌ارزد؟» — estimate.js and /api/market/estimate were already
+// complete and had no way in. This is the other side of the marketplace: the
+// seller. It is also the cheapest honest lead magnet the platform has.
+export function EstimatePage({onToast}){
+ const [form,setForm]=useState({category:'light',title:'',year:'',km:'',color:'',body:'بدون رنگ'})
+ const [result,setResult]=useState(null)
+ const [loading,setLoading]=useState(false)
+ const [error,setError]=useState('')
+
+ async function submit(event){
+  event.preventDefault()
+  if(!form.title.trim())return onToast?.('نام برند و مدل را بنویس.')
+  setLoading(true);setError('');setResult(null)
+  try{
+   const params=new URLSearchParams({category:form.category,title:form.title.trim()})
+   if(form.year)params.set('year',digitsOnly(form.year))
+   if(form.km)params.set('km',digitsOnly(form.km))
+   if(form.color)params.set('color',form.color)
+   if(form.body)params.set('body',form.body)
+   const response=await fetch(`/api/market/estimate?${params}`)
+   const data=await response.json()
+   if(data.ok)setResult(data)
+   else setError(data.message||'برای این خودرو دادهٔ کافی نداریم.')
+  }catch{setError('ارتباط با سرور برقرار نشد.')}finally{setLoading(false)}
+ }
+
+ return <main className="inner-page estimate-page"><div className="wrap">
+  <div className="center-head">
+   <span className="kicker">تخمین قیمت</span>
+   <h1>ماشینت چند می‌ارزد؟</h1>
+   <p>بر پایهٔ آگهی‌های ۳۰ روز اخیر و قیمت‌های مرجع بازار — نه حدس.</p>
+  </div>
+  <form className="estimate-form" onSubmit={submit}>
+   <label>دسته
+    <div className="select-box"><select value={form.category} onChange={event=>setForm({...form,category:event.target.value})}>
+     <option value="light">سواری و وانت</option><option value="motorcycles">موتورسیکلت</option><option value="heavy">خودرو سنگین</option>
+    </select><ChevronDown/></div>
+   </label>
+   <label>برند و مدل<input placeholder="مثلاً پژو ۲۰۷ اتوماتیک" value={form.title} onChange={event=>setForm({...form,title:event.target.value})}/></label>
+   <div className="range-inputs">
+    <label>سال ساخت<input inputMode="numeric" placeholder="۱۴۰۱" value={form.year} onChange={event=>setForm({...form,year:digitsOnly(event.target.value)})}/></label>
+    <label>کارکرد (کیلومتر)<input inputMode="numeric" placeholder="۸۵۰۰۰" value={form.km} onChange={event=>setForm({...form,km:digitsOnly(event.target.value)})}/></label>
+   </div>
+   <div className="range-inputs">
+    <label>رنگ<input placeholder="سفید" value={form.color} onChange={event=>setForm({...form,color:event.target.value})}/></label>
+    <label>وضعیت بدنه
+     <div className="select-box"><select value={form.body} onChange={event=>setForm({...form,body:event.target.value})}>
+      {['بدون رنگ','یک لکه رنگ','چند لکه رنگ','دور رنگ','تصادفی'].map(option=><option key={option}>{option}</option>)}
+     </select><ChevronDown/></div>
+    </label>
+   </div>
+   <button className="primary" disabled={loading}>{loading?'در حال محاسبه…':'تخمین قیمت'}</button>
+  </form>
+
+  {error&&<div className="estimate-empty"><ShieldCheck/><span>{error}</span></div>}
+
+  {result&&<section className="estimate-result">
+   <header>
+    <small>{result.identity.label}{result.year?` · مدل ${num(result.year)}`:''}</small>
+    <b>{toman(result.estimate)} میلیون تومان</b>
+    <span>بازهٔ منطقی: {toman(result.range.low)} تا {toman(result.range.high)} میلیون</span>
+   </header>
+   <div className="estimate-confidence"><i style={{width:`${result.confidence}%`}}/><small>اعتماد تخمین: {num(result.confidence)}٪</small></div>
+   <ul className="estimate-sources">
+    {result.sources.map(source=><li key={source.kind+source.label}>
+     <span>{source.label}</span>
+     <b>{toman(source.value)} میلیون</b>
+     {source.samples?<small>{num(source.samples)} نمونه</small>:null}
+    </li>)}
+   </ul>
+   {result.adjustments.note&&<p className="estimate-note">{result.adjustments.note}</p>}
+   <p className="estimate-note">این تخمین جایگزین کارشناسی حضوری نیست.</p>
+   <a className="primary" href={`/cars?query=${encodeURIComponent(result.identity.label)}`}>دیدن آگهی‌های مشابه <ArrowLeft/></a>
+  </section>}
+ </div></main>
+}
 
 const defaultCarFilters={category:'light',city:'1',brand:'همه برندها',query:'',gearbox:'',body:'',color:'',seller:'',minPrice:'',maxPrice:'',minYear:'',maxYear:'',maxUsage:'',model:'',showHidden:''}
 const budgetBands={'تا ۵۰۰ میلیون':['','500000000'],'تا ۷۰۰ میلیون':['','700000000'],'۷۰۰ میلیون تا ۱.۲ میلیارد':['700000000','1200000000'],'۱.۲ تا ۲ میلیارد':['1200000000','2000000000'],'بیشتر از ۲ میلیارد':['2000000000','']}
@@ -206,7 +283,21 @@ export function CarsPage({onToast}){
  async function search(limit=24,base=filters){setLoading(true);const p=new URLSearchParams({limit:String(limit),city:base.city,sort});Object.entries(base).forEach(([k,v])=>{if(v&&v!=='همه برندها')p.set(k,v)});try{const r=await fetch(`/api/listings?${p}`),d=await r.json();setCars(d.items||[]);setTotal(d.totalMatches||0);setRiskUnlocked(Boolean(d.riskInsightsUnlocked));setMarketIntel(d.marketIntel||null);setHiddenInfo({hiddenCount:d.hiddenCount||0,dealerCount:d.dealerCount||0,showingHidden:Boolean(d.showingHidden),band:d.visibilityBand||null})}catch{setCars(fallbackCars);setTotal(fallbackCars.length);setMarketIntel(null);onToast?.('ارتباط با سرور برقرار نشد؛ داده نمونه نمایش داده شد.')}finally{setLoading(false);setMobileFilters(false)}}
  const changeCategory=id=>{const next={...filters,category:id};setFilters(next);search(24,next)}
  useEffect(()=>{search();fetch('/api/settings/public').then(response=>response.json()).then(setDisplaySettings).catch(()=>{});fetch('/api/catalog/vehicles').then(response=>response.json()).then(setCatalog).catch(()=>{})},[])
- const filterPanel=<aside className={'filters-sidebar '+(mobileFilters?'show':'')}><div className="filter-head"><h3><SlidersHorizontal/> فیلترها</h3><button onClick={()=>setFilters({...defaultCarFilters})}>حذف همه</button><button className="mobile-filter-close" onClick={()=>setMobileFilters(false)}><X/></button></div><div className="filter-group"><b>استان و شهر</b><CityPicker groups={cityGroups} value={filters.city} onChange={city=>setFilters({...filters,city})}/></div><div className="filter-group"><b>برند و مدل</b><div className="select-box"><select value={filters.brand} onChange={e=>setFilters({...filters,brand:e.target.value,model:''})}>{segmentBrands.map(x=><option key={x}>{x}</option>)}</select><ChevronDown/></div></div>{segmentModels.length>0&&<div className="filter-group"><b>مدل</b><div className="select-box"><select value={filters.model||''} onChange={e=>setFilters({...filters,model:e.target.value})}><option value="">همه مدل‌ها</option>{segmentModels.map(model=><option key={model}>{model}</option>)}</select><ChevronDown/></div></div>}<Range label="قیمت (تومان)" minName="minPrice" maxName="maxPrice" filters={filters} setFilters={setFilters} placeholder1="از قیمت" placeholder2="تا قیمت"/><Range label="سال ساخت" minName="minYear" maxName="maxYear" filters={filters} setFilters={setFilters} placeholder1="مثلاً ۱۳۹۸" placeholder2="مثلاً ۱۴۰۳"/><div className="filter-group"><b>حداکثر کارکرد</b><input inputMode="numeric" placeholder="مثلاً ۸۰۰۰۰ کیلومتر" value={filters.maxUsage} onChange={e=>setFilters({...filters,maxUsage:digitsOnly(e.target.value)})}/></div><div className="filter-group"><b>گیربکس</b><div className="choice-row">{['دنده‌ای','اتوماتیک'].map(x=><button className={filters.gearbox===x?'active':''} onClick={()=>setFilters({...filters,gearbox:filters.gearbox===x?'':x})} key={x}>{x}</button>)}</div></div><div className="filter-group"><b>وضعیت بدنه</b><div className="select-box"><select value={filters.body} onChange={e=>setFilters({...filters,body:e.target.value})}><option value="">همه</option><option>بدون رنگ</option><option>یک لکه رنگ</option><option>چند لکه رنگ</option><option>تصادفی</option></select><ChevronDown/></div></div><div className="filter-group"><b>رنگ</b><div className="select-box"><select value={filters.color} onChange={e=>setFilters({...filters,color:e.target.value})}><option value="">همه رنگ‌ها</option>{managedColors.map(color=><option key={color}>{color}</option>)}</select><ChevronDown/></div></div><div className="filter-group"><b>نوع فروشنده</b><div className="choice-row">{['شخصی','نمایشگاه'].map(x=><button className={filters.seller===x?'active':''} onClick={()=>setFilters({...filters,seller:filters.seller===x?'':x})} key={x}>{x}</button>)}</div></div><label className="suspicious-toggle hidden-toggle"><input type="checkbox" checked={filters.showHidden==='true'} onChange={e=>{const next={...filters,showHidden:e.target.checked?'true':''};setFilters(next);search(24,next)}}/><span><b>نمایش آگهی‌های مشکوک و شرکتی</b><small>{hiddenInfo.hiddenCount>0?`${num(hiddenInfo.hiddenCount)} آگهی به‌دلیل اختلاف غیرعادی قیمت یا شرکتی‌بودن پنهان شده است`:`آگهی‌های بیش از ${num(hiddenInfo.band?.max||30)}٪ زیر بازار به‌صورت پیش‌فرض نمایش داده نمی‌شوند`}</small></span></label>{riskUnlocked?<label className="suspicious-toggle"><input type="checkbox" checked={filters.suspiciousOnly==='true'} onChange={e=>setFilters({...filters,suspiciousOnly:String(e.target.checked)})}/><span><b>فقط آگهی‌های مشکوک</b><small>تحلیل اختصاصی اشتراک حرفه‌ای</small></span></label>:<a className="risk-pro-lock" href="/pricing"><ShieldCheck/><span><b>تشخیص آگهی مشکوک</b><small>ویژه اعضای اشتراک پرو</small></span></a>}<button className="primary apply-filter" onClick={()=>search()}>اعمال فیلترها</button></aside>
+ const filterPanel=<aside className={'filters-sidebar '+(mobileFilters?'show':'')}><div className="filter-head"><h3><SlidersHorizontal/> فیلترها</h3><button onClick={()=>setFilters({...defaultCarFilters})}>حذف همه</button><button className="mobile-filter-close" onClick={()=>setMobileFilters(false)}><X/></button></div><div className="filter-group"><b>استان و شهر</b><CityPicker groups={cityGroups} value={filters.city} onChange={city=>setFilters({...filters,city})}/></div><div className="filter-group"><b>برند و مدل</b><div className="select-box"><select value={filters.brand} onChange={e=>setFilters({...filters,brand:e.target.value,model:''})}>{segmentBrands.map(x=><option key={x}>{x}</option>)}</select><ChevronDown/></div></div>{segmentModels.length>0&&<div className="filter-group"><b>مدل</b><div className="select-box"><select value={filters.model||''} onChange={e=>setFilters({...filters,model:e.target.value})}><option value="">همه مدل‌ها</option>{segmentModels.map(model=><option key={model}>{model}</option>)}</select><ChevronDown/></div></div>}<Range label="قیمت (تومان)" minName="minPrice" maxName="maxPrice" filters={filters} setFilters={setFilters} placeholder1="از قیمت" placeholder2="تا قیمت"/><Range label="سال ساخت" minName="minYear" maxName="maxYear" filters={filters} setFilters={setFilters} placeholder1="مثلاً ۱۳۹۸" placeholder2="مثلاً ۱۴۰۳"/><div className="filter-group"><b>حداکثر کارکرد</b><input inputMode="numeric" placeholder="مثلاً ۸۰۰۰۰ کیلومتر" value={filters.maxUsage} onChange={e=>setFilters({...filters,maxUsage:digitsOnly(e.target.value)})}/></div><div className="filter-group"><b>گیربکس</b><div className="choice-row">{['دنده‌ای','اتوماتیک'].map(x=><button className={filters.gearbox===x?'active':''} onClick={()=>setFilters({...filters,gearbox:filters.gearbox===x?'':x})} key={x}>{x}</button>)}</div></div><div className="filter-group"><b>وضعیت بدنه</b><div className="select-box"><select value={filters.body} onChange={e=>setFilters({...filters,body:e.target.value})}><option value="">همه</option><option>بدون رنگ</option><option>یک لکه رنگ</option><option>چند لکه رنگ</option><option>تصادفی</option></select><ChevronDown/></div></div><div className="filter-group"><b>رنگ</b><div className="select-box"><select value={filters.color} onChange={e=>setFilters({...filters,color:e.target.value})}><option value="">همه رنگ‌ها</option>{managedColors.map(color=><option key={color}>{color}</option>)}</select><ChevronDown/></div></div><div className="filter-group"><b>نوع فروشنده</b><div className="choice-row">{['شخصی','نمایشگاه'].map(x=><button className={filters.seller===x?'active':''} onClick={()=>setFilters({...filters,seller:filters.seller===x?'':x})} key={x}>{x}</button>)}</div></div><label className="suspicious-toggle hidden-toggle"><input type="checkbox" checked={filters.showHidden==='true'} onChange={e=>{const next={...filters,showHidden:e.target.checked?'true':''};setFilters(next);search(24,next)}}/><span><b>نمایش آگهی‌های مشکوک و شرکتی</b><small>{hiddenInfo.hiddenCount>0?`${num(hiddenInfo.hiddenCount)} آگهی به‌دلیل اختلاف غیرعادی قیمت یا شرکتی‌بودن پنهان شده است`:`آگهی‌های بیش از ${num(hiddenInfo.band?.max||30)}٪ زیر بازار به‌صورت پیش‌فرض نمایش داده نمی‌شوند`}</small></span></label>{riskUnlocked?<label className="suspicious-toggle"><input type="checkbox" checked={filters.suspiciousOnly==='true'} onChange={e=>setFilters({...filters,suspiciousOnly:String(e.target.checked)})}/><span><b>فقط آگهی‌های مشکوک</b><small>تحلیل اختصاصی اشتراک حرفه‌ای</small></span></label>:<a className="risk-pro-lock" href="/pricing"><ShieldCheck/><span><b>تشخیص آگهی مشکوک</b><small>ویژه اعضای اشتراک پرو</small></span></a>}<button className="primary apply-filter" onClick={()=>search()}>اعمال فیلترها</button><button className="secondary apply-filter" onClick={async()=>{
+  // Turning the search you already built into an alert is a one-click step; making
+  // the user re-enter the same criteria in the dashboard is how alerts go unused.
+  const payload={category:filters.category}
+  if(filters.query)payload.query=filters.query
+  if(filters.model)payload.model=filters.model
+  if(filters.maxPrice)payload.maxPrice=Number(filters.maxPrice)
+  if(filters.minYear)payload.minYear=Number(filters.minYear)
+  try{
+   const response=await fetch('/api/alerts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:filters.query||filters.model||'هشدار جست‌وجو',filters:payload})})
+   if(response.status===401)return onToast?.('برای ساخت هشدار ابتدا وارد شو.')
+   if(response.status===409)return onToast?.('به سقف تعداد هشدارها رسیده‌ای.')
+   onToast?.(response.ok?'هشدار ساخته شد؛ فرصت تازه را فوری خبر می‌دهیم.':'ساخت هشدار ناموفق بود.')
+  }catch{onToast?.('ارتباط با سرور برقرار نشد.')}
+ }}><Bell/> هشدار برای این جست‌وجو</button></aside>
  return <main className="cars-page"><div className="wrap"><div className="page-breadcrumb"><a href="/">خودروتو</a><span>/</span><b>آگهی‌های خودرو</b></div><div className="cars-hero"><div><span className="kicker">بازار خودرو</span><h1>خودروی مناسب تو همین‌جاست</h1><p>میان هزاران آگهی جست‌وجو کن و فرصت‌های زیر قیمت بازار را زودتر ببین.</p></div><div className="market-mini"><b>{num(total)}</b><span>فرصت قیمت‌دار</span></div></div><div className="market-categories">{[['light','سواری و وانت'],['heavy','خودرو سنگین'],['motorcycles','موتورسیکلت'],['parts-accessories','قطعات و لوازم'],['vehicles-services','خدمات خودرو']].map(([id,label])=><button key={id} className={filters.category===id?'active':''} onClick={()=>changeCategory(id)}>{id==='motorcycles'?<Bike/>:id==='heavy'?<Truck/>:<Car/>} <span>{label}</span></button>)}</div><div className="divar-search"><Search/><input value={filters.query} onChange={e=>setFilters({...filters,query:e.target.value})} onKeyDown={e=>e.key==='Enter'&&search()} placeholder="جست‌وجو در آگهی‌ها؛ مثلاً پژو ۲۰۷ اتوماتیک..."/><div className="search-city"><CityPicker compact groups={cityGroups} value={filters.city} onChange={city=>setFilters({...filters,city})}/></div><button onClick={()=>search()}>جست‌وجو</button></div><button className="mobile-filter-button" onClick={()=>setMobileFilters(true)}><SlidersHorizontal/> فیلترها</button><div className="listing-layout">{filterPanel}<section className="results">{marketIntel&&<div className="market-intel"><BarChart3/><div><b>شناسنامهٔ بازار {marketIntel.model}</b><span>میانگین <strong>{toman(marketIntel.avg)} میلیون تومان</strong>{' '}میانه {toman(marketIntel.median)} میلیون{' '}· از {num(marketIntel.total)} آگهی واقعی</span>{marketIntel.yearFocus&&<span>مدل {num(marketIntel.yearFocus.year)}: میانگین <strong>{toman(marketIntel.yearFocus.avg)} میلیون تومان</strong> ({num(marketIntel.yearFocus.samples)} نمونه)</span>}</div><MarketTrend intel={marketIntel} category={filters.category}/><a href="/methodology">روش محاسبه</a></div>}<div className="results-head"><div><b>{num(total)} آگهی</b><span>مرتب‌شده براساس بهترین فرصت</span></div><div className="select-box sort"><select value={sort} onChange={e=>{setSort(e.target.value);setTimeout(()=>search(),0)}}><option value="score">بهترین فرصت</option><option value="newest">جدیدترین</option><option value="cheap">ارزان‌ترین</option><option value="expensive">گران‌ترین</option></select><ChevronDown/></div></div>{loading?<div className="loading-grid">{[1,2,3,4,5,6].map(x=><i key={x}/>)}</div>:<div className={`results-grid mobile-${displaySettings.mobile_listing_mode||'carousel'}`}>{cars.map(c=><ListingCard key={c.id} car={c} onSave={onToast} settings={displaySettings}/>)}</div>}{!loading&&cars.length<total&&<button className="secondary load-results" onClick={()=>search(Math.min(200,cars.length+24))}>نمایش آگهی‌های بیشتر <ArrowLeft/></button>}</section></div></div></main>
 }
 
@@ -220,7 +311,95 @@ export function PricingPage({onToast}){
 }
 
 const dashboardTabs=[['overview','نمای کلی',LayoutDashboard],['saved','ذخیره‌شده‌ها',Heart],['alerts','هشدارهای من',Bell],['searches','جست‌وجوهای ذخیره‌شده',Search],['subscription','اشتراک',CreditCard],['account','حساب کاربری',User],['support','پشتیبانی',MessageCircle]]
-export function DashboardPage({onToast}){const [tab,setTab]=useState('overview'),[name,setName]=useState(()=>localStorage.getItem('khodroto:name')||'کاربر خودروتو'),[phone,setPhone]=useState(()=>localStorage.getItem('khodroto:phone')||'۰۹۱۲•••••••'),[alerts,setAlerts]=useState([true,true,false]);const saved=Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).filter(k=>k?.startsWith('khodroto:saved:')).map(k=>{try{const value=localStorage.getItem(k);return value==='1'?fallbackCars.find(c=>`khodroto:saved:${c.id}`===k):JSON.parse(value)}catch{return null}}).filter(Boolean);function content(){if(tab==='saved')return <DashSection title="خودروهای ذخیره‌شده" desc="آگهی‌هایی که برای بررسی دوباره نگه داشته‌ای.">{saved.length?<div className="dash-cars">{saved.map(c=><ListingCard car={c} key={c.id} onSave={onToast}/>)}</div>:<Empty icon={<Heart/>} text="هنوز آگهی‌ای ذخیره نکرده‌ای." action="مشاهده آگهی‌ها" href="/cars"/>}</DashSection>;if(tab==='alerts')return <DashSection title="هشدارهای هوشمند" desc="هر وقت فرصت تازه‌ای مطابق معیارها پیدا شد خبرت می‌کنیم.">{['پژو ۲۰۷ تا ۱ میلیارد','خودرو اتوماتیک مدل ۱۴۰۱ به بالا','دنا پلاس زیر قیمت بازار'].map((x,i)=><div className="alert-row" key={x}><div><Bell/><span><b>{x}</b><small>اعلان فوری · تهران</small></span></div><button className={alerts[i]?'switch on':'switch'} onClick={()=>setAlerts(a=>a.map((v,j)=>j===i?!v:v))}><i/></button></div>)}<button className="secondary dash-add" onClick={()=>onToast('هشدار جدید ایجاد شد.')}>＋ ساخت هشدار جدید</button></DashSection>;if(tab==='searches')return <DashSection title="جست‌وجوهای ذخیره‌شده" desc="جست‌وجوها را با یک کلیک دوباره اجرا کن."><div className="saved-search"><Search/><div><b>خودروهای اتوماتیک تهران</b><small>سال ۱۴۰۰ به بالا · تا ۱.۵ میلیارد</small></div><a href="/cars">اجرای جست‌وجو <ArrowLeft/></a></div><div className="saved-search"><Search/><div><b>پژو کم‌کارکرد</b><small>کمتر از ۸۰ هزار کیلومتر</small></div><a href="/cars">اجرای جست‌وجو <ArrowLeft/></a></div></DashSection>;if(tab==='subscription')return <DashSection title="اشتراک من" desc="وضعیت پلن و صورت‌حساب‌های خودروتو."><div className="current-plan"><Sparkles/><div><b>پلن رایگان</b><span>۶ فرصت برتر و فیلترهای پایه</span></div><a className="primary" href="/pricing">ارتقا به پرو</a></div></DashSection>;if(tab==='account')return <DashSection title="اطلاعات حساب" desc="مشخصات و تنظیمات شخصی خودت را مدیریت کن."><form className="account-form" onSubmit={async e=>{e.preventDefault();const r=await fetch('/api/user',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({name,city:'1'})});if(r.ok){localStorage.setItem('khodroto:name',name);onToast('اطلاعات حساب ذخیره شد.')}else onToast('برای ذخیره اطلاعات ابتدا وارد شو.')}}><label>نام و نام خانوادگی<input value={name} onChange={e=>setName(e.target.value)}/></label><label>شماره موبایل<input dir="ltr" value={phone} onChange={e=>setPhone(e.target.value)}/></label><label>شهر پیش‌فرض<select><option>تهران</option><option>کرج</option><option>مشهد</option></select></label><button className="primary">ذخیره تغییرات</button></form></DashSection>;if(tab==='support')return <DashSection title="پشتیبانی" desc="سؤال یا مشکلی داری؟ برای ما بنویس."><form className="account-form" onSubmit={async e=>{e.preventDefault();const fd=new FormData(e.currentTarget),r=await fetch('/api/support',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject:fd.get('subject'),message:fd.get('message')})});onToast(r.ok?'درخواست پشتیبانی ثبت شد.':'برای ثبت درخواست ابتدا وارد شو.');if(r.ok)e.currentTarget.reset()}}><label>موضوع<select name="subject"><option>مشکل فنی</option><option>اشتراک و پرداخت</option><option>گزارش آگهی</option></select></label><label>پیام<textarea name="message" required rows="5" placeholder="مشکل را با جزئیات بنویس..."/></label><button className="primary">ارسال درخواست</button></form></DashSection>;return <><div className="dash-welcome"><div><span>سلام، {name} 👋</span><h1>امروز چه ماشینی پیدا کنیم؟</h1></div><a className="primary" href="/cars">جست‌وجوی خودرو <Search/></a></div><div className="dash-stats"><article><Heart/><span><b>{num(saved.length)}</b><small>ذخیره‌شده</small></span></article><article><Bell/><span><b>۲</b><small>هشدار فعال</small></span></article><article><Gauge/><span><b>۳۴</b><small>فرصت تازه</small></span></article><article><Sparkles/><span><b>رایگان</b><small>پلن فعلی</small></span></article></div><DashSection title="فرصت‌های پیشنهادی امروز" desc="براساس رفتار و جست‌وجوهای اخیر شما"><div className="dash-cars">{fallbackCars.slice(0,2).map(c=><ListingCard car={c} key={c.id} onSave={onToast}/>)}</div></DashSection></>}
+// Saved alerts — the matcher in src/server/alerts.js has always been able to find
+// a fresh opportunity and queue an SMS; until now nothing in the UI could create
+// the alert it was supposed to match. This panel is that missing half.
+function AlertsPanel({onToast}){
+ const [items,setItems]=useState(null)
+ const [history,setHistory]=useState([])
+ const [title,setTitle]=useState('')
+ const [draft,setDraft]=useState({category:'light',query:'',maxPrice:'',minYear:''})
+ const [busy,setBusy]=useState(false)
+ const [authed,setAuthed]=useState(true)
+
+ const load=async()=>{
+  try{
+   const response=await fetch('/api/alerts')
+   if(response.status===401){setAuthed(false);setItems([]);return}
+   const data=await response.json();setItems(data.items||[]);setAuthed(true)
+  }catch{setItems([])}
+  try{const response=await fetch('/api/alerts/history');if(response.ok){const data=await response.json();setHistory(data.items||[])}}catch{}
+ }
+ useEffect(()=>{load()},[])
+
+ async function create(event){
+  event.preventDefault()
+  setBusy(true)
+  try{
+   const filters={category:draft.category}
+   if(draft.query.trim())filters.query=draft.query.trim()
+   if(draft.maxPrice)filters.maxPrice=Number(digitsOnly(draft.maxPrice))
+   if(draft.minYear)filters.minYear=Number(digitsOnly(draft.minYear))
+   const response=await fetch('/api/alerts',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({title:title||draft.query||'هشدار خودرو',filters})})
+   if(response.status===401){setAuthed(false);onToast?.('برای ساخت هشدار ابتدا وارد شو.');return}
+   if(response.status===409){const data=await response.json();onToast?.(`حداکثر ${num(data.limit)} هشدار می‌توانی داشته باشی.`);return}
+   if(!response.ok)throw new Error('failed')
+   setTitle('');setDraft({category:'light',query:'',maxPrice:'',minYear:''})
+   onToast?.('هشدار ساخته شد؛ به‌محض پیدا شدن فرصت خبرت می‌کنیم.')
+   await load()
+  }catch{onToast?.('ساخت هشدار ناموفق بود.')}finally{setBusy(false)}
+ }
+
+ async function toggle(alert){
+  setItems(list=>list.map(entry=>entry.id===alert.id?{...entry,enabled:alert.enabled?0:1}:entry))
+  try{await fetch(`/api/alerts/${alert.id}`,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:!alert.enabled})})}catch{load()}
+ }
+ async function remove(alert){
+  try{const response=await fetch(`/api/alerts/${alert.id}`,{method:'DELETE'});if(response.ok){onToast?.('هشدار حذف شد.');load()}}catch{onToast?.('حذف هشدار ناموفق بود.')}
+ }
+
+ const describe=alert=>{
+  let filters={}
+  try{filters=JSON.parse(alert.filters||'{}')}catch{}
+  const parts=[]
+  if(filters.query)parts.push(filters.query)
+  if(filters.maxPrice)parts.push(`تا ${toman(filters.maxPrice)} میلیون`)
+  if(filters.minYear)parts.push(`مدل ${num(filters.minYear)} به بالا`)
+  return parts.length?parts.join(' · '):'همهٔ فرصت‌های این دسته'
+ }
+
+ return <DashSection title="هشدارهای هوشمند" desc="هر وقت فرصت تازه‌ای مطابق معیارها پیدا شد، همان لحظه خبرت می‌کنیم.">
+  {!authed&&<div className="hidden-notice">برای ساخت و مدیریت هشدار باید وارد حساب شوی.</div>}
+  {items===null?<div className="hidden-notice">در حال بارگذاری…</div>
+   :items.length===0?<Empty icon={<Bell/>} text="هنوز هشداری نساخته‌ای. اولین هشدار را پایین بساز." action="مشاهده آگهی‌ها" href="/cars"/>
+   :items.map(alert=><div className="alert-row" key={alert.id}>
+     <div><Bell/><span><b>{alert.title}</b><small>{describe(alert)}</small></span></div>
+     <div className="alert-row-actions">
+      <button className={alert.enabled?'switch on':'switch'} onClick={()=>toggle(alert)} aria-label="روشن/خاموش"><i/></button>
+      <button className="alert-delete" onClick={()=>remove(alert)} aria-label="حذف هشدار"><X/></button>
+     </div>
+    </div>)}
+  <form className="alert-create" onSubmit={create}>
+   <b>ساخت هشدار تازه</b>
+   <input placeholder="نام هشدار (اختیاری)" value={title} onChange={event=>setTitle(event.target.value)}/>
+   <input placeholder="مثلاً پژو ۲۰۷ اتوماتیک" value={draft.query} onChange={event=>setDraft({...draft,query:event.target.value})}/>
+   <div className="range-inputs">
+    <input inputMode="numeric" placeholder="حداکثر قیمت (تومان)" value={draft.maxPrice} onChange={event=>setDraft({...draft,maxPrice:digitsOnly(event.target.value)})}/>
+    <input inputMode="numeric" placeholder="از سال" value={draft.minYear} onChange={event=>setDraft({...draft,minYear:digitsOnly(event.target.value)})}/>
+   </div>
+   <button className="primary" disabled={busy}>{busy?'در حال ثبت…':'＋ ساخت هشدار'}</button>
+  </form>
+  {history.length>0&&<div className="alert-history">
+   <b>آخرین اعلان‌ها</b>
+   {history.slice(0,8).map(entry=><div className="alert-history-row" key={entry.id}>
+    <span>{entry.message}</span>
+    <small>{entry.status==='sent'?'ارسال شد':'در صف ارسال'}</small>
+   </div>)}
+  </div>}
+ </DashSection>
+}
+
+export function DashboardPage({onToast}){const [tab,setTab]=useState('overview'),[name,setName]=useState(()=>localStorage.getItem('khodroto:name')||'کاربر خودروتو'),[phone,setPhone]=useState(()=>localStorage.getItem('khodroto:phone')||'۰۹۱۲•••••••'),[alerts,setAlerts]=useState([true,true,false]);const saved=Array.from({length:localStorage.length},(_,i)=>localStorage.key(i)).filter(k=>k?.startsWith('khodroto:saved:')).map(k=>{try{const value=localStorage.getItem(k);return value==='1'?fallbackCars.find(c=>`khodroto:saved:${c.id}`===k):JSON.parse(value)}catch{return null}}).filter(Boolean);function content(){if(tab==='saved')return <DashSection title="خودروهای ذخیره‌شده" desc="آگهی‌هایی که برای بررسی دوباره نگه داشته‌ای.">{saved.length?<div className="dash-cars">{saved.map(c=><ListingCard car={c} key={c.id} onSave={onToast}/>)}</div>:<Empty icon={<Heart/>} text="هنوز آگهی‌ای ذخیره نکرده‌ای." action="مشاهده آگهی‌ها" href="/cars"/>}</DashSection>;if(tab==='alerts')return <AlertsPanel onToast={onToast}/>;if(tab==='searches')return <DashSection title="جست‌وجوهای ذخیره‌شده" desc="جست‌وجوها را با یک کلیک دوباره اجرا کن."><div className="saved-search"><Search/><div><b>خودروهای اتوماتیک تهران</b><small>سال ۱۴۰۰ به بالا · تا ۱.۵ میلیارد</small></div><a href="/cars">اجرای جست‌وجو <ArrowLeft/></a></div><div className="saved-search"><Search/><div><b>پژو کم‌کارکرد</b><small>کمتر از ۸۰ هزار کیلومتر</small></div><a href="/cars">اجرای جست‌وجو <ArrowLeft/></a></div></DashSection>;if(tab==='subscription')return <DashSection title="اشتراک من" desc="وضعیت پلن و صورت‌حساب‌های خودروتو."><div className="current-plan"><Sparkles/><div><b>پلن رایگان</b><span>۶ فرصت برتر و فیلترهای پایه</span></div><a className="primary" href="/pricing">ارتقا به پرو</a></div></DashSection>;if(tab==='account')return <DashSection title="اطلاعات حساب" desc="مشخصات و تنظیمات شخصی خودت را مدیریت کن."><form className="account-form" onSubmit={async e=>{e.preventDefault();const r=await fetch('/api/user',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({name,city:'1'})});if(r.ok){localStorage.setItem('khodroto:name',name);onToast('اطلاعات حساب ذخیره شد.')}else onToast('برای ذخیره اطلاعات ابتدا وارد شو.')}}><label>نام و نام خانوادگی<input value={name} onChange={e=>setName(e.target.value)}/></label><label>شماره موبایل<input dir="ltr" value={phone} onChange={e=>setPhone(e.target.value)}/></label><label>شهر پیش‌فرض<select><option>تهران</option><option>کرج</option><option>مشهد</option></select></label><button className="primary">ذخیره تغییرات</button></form></DashSection>;if(tab==='support')return <DashSection title="پشتیبانی" desc="سؤال یا مشکلی داری؟ برای ما بنویس."><form className="account-form" onSubmit={async e=>{e.preventDefault();const fd=new FormData(e.currentTarget),r=await fetch('/api/support',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({subject:fd.get('subject'),message:fd.get('message')})});onToast(r.ok?'درخواست پشتیبانی ثبت شد.':'برای ثبت درخواست ابتدا وارد شو.');if(r.ok)e.currentTarget.reset()}}><label>موضوع<select name="subject"><option>مشکل فنی</option><option>اشتراک و پرداخت</option><option>گزارش آگهی</option></select></label><label>پیام<textarea name="message" required rows="5" placeholder="مشکل را با جزئیات بنویس..."/></label><button className="primary">ارسال درخواست</button></form></DashSection>;return <><div className="dash-welcome"><div><span>سلام، {name} 👋</span><h1>امروز چه ماشینی پیدا کنیم؟</h1></div><a className="primary" href="/cars">جست‌وجوی خودرو <Search/></a></div><div className="dash-stats"><article><Heart/><span><b>{num(saved.length)}</b><small>ذخیره‌شده</small></span></article><article><Bell/><span><b>۲</b><small>هشدار فعال</small></span></article><article><Gauge/><span><b>۳۴</b><small>فرصت تازه</small></span></article><article><Sparkles/><span><b>رایگان</b><small>پلن فعلی</small></span></article></div><DashSection title="فرصت‌های پیشنهادی امروز" desc="براساس رفتار و جست‌وجوهای اخیر شما"><div className="dash-cars">{fallbackCars.slice(0,2).map(c=><ListingCard car={c} key={c.id} onSave={onToast}/>)}</div></DashSection></>}
 return <main className="dashboard-page"><div className="wrap dashboard-layout"><aside className="dash-sidebar"><div className="dash-user"><div>{name.slice(0,1)}</div><span><b>{name}</b><small>{phone}</small></span></div>{dashboardTabs.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>setTab(id)} key={id}><Icon/>{label}</button>)}<a className="dealer-dashboard-link" href="/dealer"><Store/> ابزارهای نمایشگاه</a><a href="/"><ArrowLeft/> بازگشت به سایت</a></aside><section className="dash-main">{content()}</section></div></main>}
 function DashSection({title,desc,children}){return <section className="dash-section"><div className="dash-section-head"><div><h2>{title}</h2><p>{desc}</p></div></div>{children}</section>}
 function Empty({icon,text,action,href}){return <div className="dash-empty">{icon}<b>{text}</b><a href={href}>{action}<ArrowLeft/></a></div>}

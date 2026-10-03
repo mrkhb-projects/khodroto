@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createPortal } from 'react-dom'
-import { CarsPage, DashboardPage, PricingPage } from './pages'
+import { CarsPage, DashboardPage, EstimatePage, PricingPage } from './pages'
 import { AdminPage } from './admin'
 import { ComparePage } from './compare-page'
 import { DealerPage } from './dealer-page'
@@ -42,7 +42,7 @@ function Header({onLogin}){
   useEffect(()=>{fetch('/api/settings/public').then(r=>r.json()).then(setFeatures).catch(()=>{});const count=()=>setCompareCount(comparedCars().length);window.addEventListener('khodroto:compare',count);return()=>window.removeEventListener('khodroto:compare',count)},[])
   useEffect(()=>{const sync=()=>fetch('/api/auth/me').then(response=>response.json()).then(data=>setAuthenticated(Boolean(data.user))).catch(()=>setAuthenticated(false));sync();window.addEventListener('khodroto:auth',sync);return()=>window.removeEventListener('khodroto:auth',sync)},[])
   return <header className="header"><div className="wrap nav"><Brand/><nav className={open?'open':''} onClick={()=>setOpen(false)}>
-    {managedLinks(features.header_links,[['آگهی‌ها','/cars'],['مقایسه','/compare'],['روش تحلیل','/methodology'],['اشتراک','/pricing']]).filter(([,href])=>!(href==='/compare'&&features.feature_comparison==='false')&&!(href==='/pricing'&&features.feature_pricing==='false')).map(([label,href])=><a href={href} key={href} aria-current={window.location.pathname===href?'page':undefined}>{label}{href==='/compare'&&compareCount>0&&<i className="nav-compare-count">{compareCount}</i>}</a>)}
+    {managedLinks(features.header_links,[['آگهی‌ها','/cars'],['تخمین قیمت','/estimate'],['مقایسه','/compare'],['روش تحلیل','/methodology'],['اشتراک','/pricing']]).filter(([,href])=>!(href==='/compare'&&features.feature_comparison==='false')&&!(href==='/pricing'&&features.feature_pricing==='false')).map(([label,href])=><a href={href} key={href} aria-current={window.location.pathname===href?'page':undefined}>{label}{href==='/compare'&&compareCount>0&&<i className="nav-compare-count">{compareCount}</i>}</a>)}
   </nav><div className="nav-actions">{authenticated?<a className="login auth-entry dashboard-entry" href="/dashboard">داشبورد من</a>:<button className="login auth-entry" onClick={onLogin}>ورود</button>}<a className="primary small" href="/cars">جست‌وجوی خودرو</a><button className="menu" onClick={()=>setOpen(!open)} aria-label="منو"><Menu size={22}/></button></div></div></header>
 }
 
@@ -138,6 +138,7 @@ function App(){
   if(path==='/cars')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><CarsPage onToast={showToast}/>{overlays}</>
   if(path==='/pricing'&&siteSettings.feature_pricing==='false')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><NotFoundPage/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
   if(path==='/pricing')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><PricingPage onToast={showToast}/>{overlays}</>
+  if(path==='/estimate')return <><AnnouncementBar/><Header onLogin={()=>setModal('login')}/><EstimatePage onToast={showToast}/><Footer onNotify={()=>setModal('notify')}/>{overlays}</>
   if(path==='/dealer')return <><DealerPage onToast={showToast}/>{overlays}</>
   if(path==='/dashboard')return <><DashboardPage onToast={showToast}/>{overlays}</>
   if(path==='/khodroto-admin')return <><AdminPage/>{overlays}</>
