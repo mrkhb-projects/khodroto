@@ -27,6 +27,8 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  CREATE TABLE IF NOT EXISTS dealer_leads(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL,name TEXT NOT NULL,phone TEXT,vehicle TEXT,budget INTEGER DEFAULT 0,status TEXT DEFAULT 'new',notes TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,FOREIGN KEY(user_id) REFERENCES users(id));
  CREATE TABLE IF NOT EXISTS alert_deliveries(id INTEGER PRIMARY KEY,alert_id INTEGER NOT NULL,user_id INTEGER,listing_id TEXT NOT NULL,message TEXT,status TEXT DEFAULT 'queued',created_at TEXT NOT NULL,UNIQUE(alert_id,listing_id));
  CREATE INDEX IF NOT EXISTS idx_alert_deliveries ON alert_deliveries(alert_id,created_at);
+ CREATE TABLE IF NOT EXISTS saved_listings(user_id INTEGER NOT NULL,token TEXT NOT NULL,payload TEXT,created_at TEXT NOT NULL,PRIMARY KEY(user_id,token));
+ CREATE INDEX IF NOT EXISTS idx_saved_listings ON saved_listings(user_id,created_at);
  CREATE TABLE IF NOT EXISTS seller_reputation(seller_key TEXT PRIMARY KEY,label TEXT,listings INTEGER DEFAULT 0,rejected INTEGER DEFAULT 0,review INTEGER DEFAULT 0,avg_reference_ratio REAL,updated_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS baseline_history(id INTEGER PRIMARY KEY,category TEXT NOT NULL,cohort_key TEXT NOT NULL,year INTEGER DEFAULT 0,color TEXT DEFAULT '',samples INTEGER,median INTEGER,avg INTEGER,captured_on TEXT NOT NULL,UNIQUE(category,cohort_key,year,color,captured_on));
  CREATE INDEX IF NOT EXISTS idx_baseline_history ON baseline_history(category,cohort_key,captured_on);
@@ -137,6 +139,61 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
  function pendingAlertDeliveries(limit=100){return db.prepare("SELECT * FROM alert_deliveries WHERE status='queued' ORDER BY id LIMIT ?").all(limit)}
  function markAlertDelivered(id,status='sent'){db.prepare('UPDATE alert_deliveries SET status=? WHERE id=?').run(status,id)}
  function alertHistory(userId,limit=50){return db.prepare('SELECT * FROM alert_deliveries WHERE user_id=? ORDER BY id DESC LIMIT ?').all(userId,limit)}
+
+ // --- In-app notifications ----------------------------------------------------
+ // An alert that only ever becomes an SMS is invisible to a user who is already
+ // on the site, and unverifiable when the SMS provider is down.
+ const deliveryColumns=new Set(db.prepare('PRAGMA table_info(alert_deliveries)').all().map(row=>row.name))
+ if(!deliveryColumns.has('read_at'))db.exec('ALTER TABLE alert_deliveries ADD COLUMN read_at TEXT')
+ function notifications(userId,limit=30){
+  return db.prepare('SELECT d.id,d.listing_id,d.message,d.status,d.created_at,d.read_at,a.title FROM alert_deliveries d LEFT JOIN alerts a ON a.id=d.alert_id WHERE d.user_id=? ORDER BY d.id DESC LIMIT ?').all(userId,limit)
+ }
+ function unreadNotifications(userId){
+  return db.prepare('SELECT COUNT(*) n FROM alert_deliveries WHERE user_id=? AND read_at IS NULL').get(userId).n
+ }
+ function markNotificationsRead(userId,ids=null){
+  if(Array.isArray(ids)&&ids.length){
+   const clause=ids.map(()=>'?').join(',')
+   return db.prepare(`UPDATE alert_deliveries SET read_at=? WHERE user_id=? AND read_at IS NULL AND id IN (${clause})`).run(now(),userId,...ids).changes
+  }
+  return db.prepare('UPDATE alert_deliveries SET read_at=? WHERE user_id=? AND read_at IS NULL').run(now(),userId).changes
+ }
+
+ // --- Saved listings ----------------------------------------------------------
+ // These lived in localStorage, so they vanished on a new browser and could never
+ // be used by anything server-side.
+ function saveListing(userId,token,payload){
+  db.prepare('INSERT OR REPLACE INTO saved_listings(user_id,token,payload,created_at) VALUES(?,?,?,COALESCE((SELECT created_at FROM saved_listings WHERE user_id=? AND token=?),?))')
+   .run(userId,String(token),json(payload||{}),userId,String(token),now())
+  return true
+ }
+ function unsaveListing(userId,token){return db.prepare('DELETE FROM saved_listings WHERE user_id=? AND token=?').run(userId,String(token)).changes>0}
+ function savedListings(userId,limit=200){
+  return db.prepare('SELECT token,payload,created_at FROM saved_listings WHERE user_id=? ORDER BY created_at DESC LIMIT ?').all(userId,limit)
+   .map(row=>{try{return{...JSON.parse(row.payload||'{}'),token:row.token,id:row.token,savedAt:row.created_at}}catch{return{token:row.token,id:row.token,savedAt:row.created_at}}})
+ }
+ function savedTokens(userId){return db.prepare('SELECT token FROM saved_listings WHERE user_id=?').all(userId).map(row=>row.token)}
+
+ // --- Analytics ---------------------------------------------------------------
+ // Daily series for the admin charts. All three were already in the database and
+ // only ever shown as a single total.
+ function analyticsSeries(days=30){
+  const since=new Date(Date.now()-days*86400000).toISOString()
+  const fill=rows=>{
+   const byDay=new Map(rows.map(row=>[row.day,Number(row.value)||0]))
+   return Array.from({length:days},(_,index)=>{
+    const day=new Date(Date.now()-(days-1-index)*86400000).toISOString().slice(0,10)
+    return{day,value:byDay.get(day)||0}
+   })
+  }
+  return{
+   days,
+   revenue:fill(db.prepare("SELECT substr(COALESCE(started_at,created_at),1,10) day,SUM(amount) value FROM subscriptions WHERE COALESCE(started_at,created_at)>=? AND status='active' GROUP BY day").all(since)),
+   signups:fill(db.prepare('SELECT substr(created_at,1,10) day,COUNT(*) value FROM users WHERE created_at>=? GROUP BY day').all(since)),
+   analyzed:fill(db.prepare('SELECT observed_date day,COUNT(*) value FROM listing_observations WHERE observed_date>=? GROUP BY day').all(since.slice(0,10))),
+   alerts:fill(db.prepare('SELECT substr(created_at,1,10) day,COUNT(*) value FROM alert_deliveries WHERE created_at>=? GROUP BY day').all(since)),
+  }
+ }
 
  // --- Seller reputation -------------------------------------------------------
  // A dealer who floods the market with bait prices should be visible as such.
@@ -249,7 +306,7 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
    .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
    .filter(Boolean)
  }
- return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
+ return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,notifications,unreadNotifications,markNotificationsRead,saveListing,unsaveListing,savedListings,savedTokens,analyticsSeries,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),

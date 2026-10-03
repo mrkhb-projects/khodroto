@@ -3,3 +3,14 @@
 /* Operations panels */
 .admin-actions-row{display:flex;flex-wrap:wrap;gap:.6rem;padding:0 16px 16px}
 .admin-pill{display:inline-flex;align-items:center;padding:.35rem .8rem;border-radius:999px;background:#eef2f7;color:#41506b;font-size:.82rem;font-weight:600}
+
+/* Trend charts */
+.admin-chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;padding:16px}
+.admin-chart-grid article{border:1px solid #e7ecf3;border-radius:12px;padding:14px;background:#fff}
+.admin-chart-grid h3{margin:0 0 10px;font-size:.92rem;color:#41506b}
+.mini-chart-bars{display:flex;align-items:flex-end;gap:2px;height:90px}
+.mini-chart-bars span{flex:1;min-width:2px;border-radius:2px 2px 0 0;opacity:.85}
+.mini-chart-bars span:hover{opacity:1}
+.mini-chart-foot{display:flex;justify-content:space-between;gap:8px;margin-top:8px;font-size:.78rem;color:#6b7280}
+.mini-chart-foot .up{color:#2e7d5b}
+.mini-chart-foot .down{color:#b3261e}

@@ -324,6 +324,49 @@ export async function runAlerts() {
 }
 
 app.get('/api/alerts/history', requireUser, (req, res) => res.json({ items: store.alertHistory(req.user.id) }))
+
+// --- In-app notifications ----------------------------------------------------
+// An alert that only ever becomes an SMS is invisible to someone already on the
+// site, and impossible to verify when the SMS provider is down.
+app.get('/api/notifications', requireUser, (req, res) => res.json({
+ items: store.notifications(req.user.id, Math.min(100, Math.max(1, Number(req.query.limit) || 30))),
+ unread: store.unreadNotifications(req.user.id),
+}))
+app.post('/api/notifications/read', requireUser, (req, res) => {
+ const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Number.isFinite).slice(0, 100) : null
+ const changed = store.markNotificationsRead(req.user.id, ids)
+ res.json({ ok: true, changed, unread: store.unreadNotifications(req.user.id) })
+})
+
+// --- Saved listings ----------------------------------------------------------
+// They lived in localStorage: lost on a new browser, and invisible to the server.
+app.get('/api/saved', requireUser, (req, res) => res.json({ items: store.savedListings(req.user.id), tokens: store.savedTokens(req.user.id) }))
+app.post('/api/saved', requireUser, (req, res) => {
+ const token = String(req.body?.token || req.body?.id || '').slice(0, 120)
+ if (!token) return res.status(400).json({ error: 'TOKEN_REQUIRED' })
+ // Store a trimmed copy so the dashboard can render the card even after the ad
+ // disappears from the live market.
+ const source = req.body?.listing || {}
+ const keep = ['title','price','city','year','km','color','image','link','score','tier','tierLabel','market','discount','freshness','hidden','dealer']
+ store.saveListing(req.user.id, token, Object.fromEntries(keep.map(key => [key, source[key]]).filter(([, value]) => value !== undefined)))
+ res.status(201).json({ ok: true, tokens: store.savedTokens(req.user.id) })
+})
+app.delete('/api/saved/:token', requireUser, (req, res) => {
+ store.unsaveListing(req.user.id, String(req.params.token))
+ res.json({ ok: true, tokens: store.savedTokens(req.user.id) })
+})
+// One-shot import of whatever the browser already had, so nobody loses their list.
+app.post('/api/saved/import', requireUser, (req, res) => {
+ const items = Array.isArray(req.body?.items) ? req.body.items.slice(0, 100) : []
+ let imported = 0
+ for (const item of items) {
+  const token = String(item?.token || item?.id || '')
+  if (!token) continue
+  store.saveListing(req.user.id, token, item)
+  imported += 1
+ }
+ res.json({ ok: true, imported, tokens: store.savedTokens(req.user.id) })
+})
 app.post('/api/admin/alerts/run', adminOnly, async (req, res) => {
  const result = await runAlerts()
  store.audit(req.user.id, 'run', 'alerts', 'manual', result)
@@ -587,6 +630,13 @@ app.get('/api/admin/health',adminOnly,(_req,res)=>{
 })
 
 // Sellers whose prices repeatedly fail the screen, for the admin table.
+// Daily series for the admin charts. Every number was already in the database and
+// only ever shown as a single lifetime total.
+app.get('/api/admin/analytics',adminOnly,(req,res)=>{
+ const days=Math.min(180,Math.max(7,Number(req.query.days)||30))
+ res.json(store.analyticsSeries(days))
+})
+
 app.get('/api/admin/sellers',adminOnly,(req,res)=>{
  const limit=Math.min(200,Math.max(1,Number(req.query.limit)||50))
  res.json({items:store.worstSellers(limit),minAds:sellerPublicMin()})

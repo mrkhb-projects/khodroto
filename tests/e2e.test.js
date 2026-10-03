@@ -237,6 +237,21 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · account-backed features need an account', () => {
+  it('refuses saved listings, notifications and analytics to anonymous callers', async () => {
+    for (const route of ['/api/saved', '/api/notifications']) {
+      expect((await get(route)).status, route).toBe(401)
+    }
+    expect((await get('/api/admin/analytics')).status).toBe(401)
+    const saved = await get('/api/saved', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'x' }),
+    })
+    expect(saved.status).toBe(401)
+    expect((await get('/api/notifications/read', { method: 'POST' })).status).toBe(401)
+  })
+})
+
 describe('e2e · admin operations surface', () => {
   it('guards every new endpoint behind the admin session', async () => {
     for (const route of ['/api/admin/health', '/api/admin/sellers', '/api/admin/reference/manual',

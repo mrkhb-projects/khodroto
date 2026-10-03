@@ -30,7 +30,8 @@ export function AdminPage(){
  if(authRequired)return <AdminLogin onSuccess={()=>{setAuthRequired(false);setError('');load(tab)}}/>
  return <main className="admin-shell"><aside className={'admin-sidebar '+(menu?'open':'')}><div className="admin-sidebar-brand"><img src="/brand/khodroto-mark.svg"/><div><b>خودروتو</b><span>مرکز مدیریت</span></div><button onClick={()=>setMenu(false)}><X/></button></div><nav>{menuGroups.map(([group,items])=><div className="admin-nav-group" key={group}><span>{group}</span>{items.map(([id,label,Icon])=><button className={tab===id?'active':''} onClick={()=>choose(id)} key={id}><Icon/>{label}{id==='tickets'&&stats?.tickets>0&&<i>{n(stats.tickets)}</i>}</button>)}</div>)}</nav><div className="admin-sidebar-foot"><span className={status?.connected?'online':'offline'}><i/>{status?.connected?'سامانه متصل':'داده واقعی قطع است'}</span><a href="/">مشاهده وب‌سایت <ChevronLeft/></a></div></aside><section className="admin-workspace"><header className="admin-topbar"><button className="admin-menu" onClick={()=>setMenu(true)}><Menu/></button><div><span>پنل مدیریت فارسی خودروتو</span><h1>{current?.[1]}</h1></div><div className="admin-top-actions"><span>{new Date().toLocaleDateString('fa-IR',{weekday:'long',year:'numeric',month:'long',day:'numeric'})}</span><button onClick={()=>load(tab)}><RefreshCw className={busy?'spin':''}/> تازه‌سازی</button></div></header><div className="admin-canvas">{error&&<div className="admin-warning"><AlertTriangle/>{error}</div>}{notice&&<div className="admin-success"><ShieldCheck/>{notice}</div>}{tab==='overview'&&<Overview stats={stats} status={status} refresh={refreshCrawler} busy={busy} navigate={choose}/>} {tab==='users'&&<UsersPanel patch={patch}/>} {tab==='plans'&&<PlansPanel items={plans} setItems={setPlans} api={api}/>} {tab==='subscriptions'&&<SubscriptionsPanel items={data} patch={patch}/>} {tab==='tickets'&&<TicketsPanel items={data} patch={patch}/>} {tab==='listings'&&<ListingsPanel items={data} patch={patch}/>} {tab==='content'&&<ContentPanel items={slides} reload={()=>load('content')} api={api}/>} {tab==='taxonomy'&&<CatalogPanel config={configPanels.taxonomy} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)} sync={syncCatalog} busy={busy}/>} {tab==='pages'&&<ConfigPanel config={configPanels.pages} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='faq'&&<ConfigPanel config={configPanels.faq} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='navigation'&&<ConfigPanel config={configPanels.navigation} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='notifications'&&<ConfigPanel config={configPanels.notifications} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='seo'&&<ConfigPanel config={configPanels.seo} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='appearance'&&<><ConfigPanel config={configPanels.appearance} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/></>} {tab==='health'&&<HealthPanel/>}
    {tab==='sellers'&&<SellersPanel/>}
-   {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='finance'&&<FinancePanel items={data} patch={patch}/>} {tab==='reports'&&<ReportsPanel stats={stats} items={data}/>} {tab==='settings'&&<><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><IntegrationsManager value={integrations} reload={()=>load('settings')}/></>} {tab==='audit'&&<AuditPanel items={data}/>}</div></section></main>
+   {tab==='crawler'&&<CrawlerPanel status={status} settings={settings} setSettings={setSettings} save={()=>patch('/api/admin/settings',settings)} refresh={refreshCrawler} busy={busy}/>} {tab==='security'&&<ConfigPanel config={configPanels.security} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='backup'&&<ConfigPanel config={configPanels.backup} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='promotions'&&<ConfigPanel config={configPanels.promotions} value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/>} {tab==='finance'&&<FinancePanel items={data} patch={patch}/>} {tab==='reports'&&<AnalyticsPanel/>}
+   {tab==='reports'&&<ReportsPanel stats={stats} items={data}/>} {tab==='settings'&&<><SettingsForm value={settings} setValue={setSettings} save={()=>patch('/api/admin/settings',settings)}/><IntegrationsManager value={integrations} reload={()=>load('settings')}/></>} {tab==='audit'&&<AuditPanel items={data}/>}</div></section></main>
 }
 
 // Operations view. Every number here was already computed inside the server and
@@ -106,6 +107,52 @@ function HealthPanel(){
    </section>
   </>}
  </>
+}
+
+// Minimal dependency-free bar chart. A table of 30 numbers tells an operator
+// nothing about direction; a shape does.
+function MiniChart({series=[],color='#17324f',format=value=>n(value)}){
+ const values=series.map(point=>Number(point.value)||0)
+ const peak=Math.max(1,...values)
+ const total=values.reduce((sum,value)=>sum+value,0)
+ const recent=values.slice(-7).reduce((sum,value)=>sum+value,0)
+ const previous=values.slice(-14,-7).reduce((sum,value)=>sum+value,0)
+ const change=previous?Math.round(((recent-previous)/previous)*100):null
+ return <div className="mini-chart">
+  <div className="mini-chart-bars">{series.map(point=>
+   <span key={point.day} title={`${point.day}: ${format(point.value)}`}
+    style={{height:`${Math.max(2,(Number(point.value)||0)/peak*100)}%`,background:color}}/>)}</div>
+  <div className="mini-chart-foot">
+   <span>مجموع {format(total)}</span>
+   {change!==null&&<span className={change>=0?'up':'down'}>{change>=0?'▲':'▼'} {n(Math.abs(change))}٪ نسبت به هفتهٔ قبل</span>}
+  </div>
+ </div>
+}
+
+function AnalyticsPanel(){
+ const [data,setData]=useState(null)
+ const [days,setDays]=useState(30)
+ useEffect(()=>{
+  let alive=true
+  fetch(`/api/admin/analytics?days=${days}`).then(r=>r.ok?r.json():null).then(d=>{if(alive)setData(d)})
+  return()=>{alive=false}
+ },[days])
+ const cards=[
+  ['درآمد اشتراک',data?.revenue,'#2e7d5b',value=>`${n(Math.round(value/1000))} هزار تومان`],
+  ['کاربران تازه',data?.signups,'#17324f',value=>`${n(value)} نفر`],
+  ['آگهی تحلیل‌شده',data?.analyzed,'#4a6b8a',value=>`${n(value)} آگهی`],
+  ['اعلان ارسالی',data?.alerts,'#b8860b',value=>`${n(value)} اعلان`],
+ ]
+ return <section className="admin-panel">
+  <div className="admin-panel-title">
+   <div><h2>روند {n(days)} روز گذشته</h2><p>درآمد، رشد کاربر و حجم تحلیل در یک نگاه.</p></div>
+   <div className="admin-actions-row" style={{padding:0}}>{[7,30,90].map(option=>
+    <button key={option} className={days===option?'primary':'secondary'} onClick={()=>setDays(option)}>{n(option)} روز</button>)}</div>
+  </div>
+  {!data?<p style={{padding:16}}>در حال بارگذاری…</p>
+   :<div className="admin-chart-grid">{cards.map(([label,series,color,format])=>
+     <article key={label}><h3>{label}</h3><MiniChart series={series||[]} color={color} format={format}/></article>)}</div>}
+ </section>
 }
 
 // Turning a source on used to mean editing .env over SSH and restarting the app.

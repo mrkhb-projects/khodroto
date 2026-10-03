@@ -116,3 +116,10 @@ noscript-content thead th{background:#f6f8fc}
 .seller-record.seller-good{background:#eef7f1;color:#2e7d5b}
 .seller-record.seller-mixed{background:#fdf3e7;color:#8a5a22}
 .seller-record.seller-bad{background:#fdecea;color:#b3261e}
+.notification-list{display:flex;flex-direction:column;gap:.6rem}
+.notification-row{display:flex;align-items:flex-start;gap:.7rem;padding:.8rem 1rem;border:1px solid #e9edf2;border-radius:12px;background:#fff}
+.notification-row.unread{border-color:#c9dcf0;background:#f6faff}
+.notification-row>div{flex:1}
+.notification-row p{margin:.2rem 0;color:#41506b;font-size:.88rem}
+.notification-row small{color:#8a8f98;font-size:.76rem}
+.notification-row a{align-self:center;white-space:nowrap;font-size:.84rem}
