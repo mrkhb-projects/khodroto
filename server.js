@@ -19,7 +19,7 @@ import { estimateValue } from './src/server/estimate.js'
 import { dispatchAlerts } from './src/server/alerts.js'
 import { buildModelPages, renderModelPage, renderIndexPage, renderSitemap, renderRobots, slugify } from './src/server/seo.js'
 import fs from 'node:fs'
-import { collectExternalListings, providerStatuses } from './src/server/providers/index.js'
+import { collectExternalListings, providerStatuses, setProviderOverrides } from './src/server/providers/index.js'
 
 let referenceIndex = buildReferenceIndex([])
 const app = express()
@@ -470,7 +470,76 @@ app.delete('/api/dealer/leads/:id',requireDealer,(req,res)=>{store.deleteDealerL
 app.get('/api/dealer/export.csv',requireDealer,(req,res)=>{const esc=value=>`"${String(value??'').replaceAll('"','""')}"`,rows=[['نوع','عنوان/نام','خودرو','سال','قیمت خرید/بودجه','قیمت هدف','وضعیت','تلفن'],...store.dealerInventory(req.user.id).map(item=>['موجودی',item.title,`${item.brand} ${item.model}`,item.year,item.buy_price,item.target_price,item.status,'']),...store.dealerLeads(req.user.id).map(item=>['مشتری',item.name,item.vehicle,'',item.budget,'',item.status,item.phone])];res.set({'content-type':'text/csv; charset=utf-8','content-disposition':'attachment; filename="khodroto-dealer.csv"'});res.send('\ufeff'+rows.map(row=>row.map(esc).join(',')).join('\n'))})
 
 app.get('/api/admin/stats',adminOnly,(_req,res)=>res.json(store.stats()))
-app.get('/api/admin/users',adminOnly,(_req,res)=>res.json({items:store.adminUsers()}))
+app.get('/api/admin/users',adminOnly,(req,res)=>{
+ const result=store.adminUsers({
+  query:String(req.query.query||'').slice(0,60),
+  role:String(req.query.role||''),
+  limit:Math.min(200,Math.max(1,Number(req.query.limit)||50)),
+  offset:Math.max(0,Number(req.query.offset)||0),
+ })
+ res.json(result)
+})
+
+// --- CSV export -------------------------------------------------------------
+// Every admin table was read-only on screen with no way to get the data out, so
+// any real analysis meant opening the SQLite file on the server.
+const csvCell=value=>{
+ const text=value===null||value===undefined?'':String(value)
+ return /[",\n;]/.test(text)?`"${text.replace(/"/g,'""')}"`:text
+}
+const toCsv=(columns,rows)=>[columns.map(col=>csvCell(col.label)).join(','),
+ ...rows.map(row=>columns.map(col=>csvCell(col.get(row))).join(','))].join('\n')
+
+const EXPORTS={
+ users:{
+  file:'users',
+  columns:[['شناسه',r=>r.id],['موبایل',r=>r.phone],['نام',r=>r.name],['نقش',r=>r.role],['پلن',r=>r.plan||'رایگان'],['تاریخ عضویت',r=>r.created_at]],
+  rows:()=>store.adminUsers({limit:200,offset:0}).items,
+ },
+ subscriptions:{
+  file:'subscriptions',
+  columns:[['شناسه',r=>r.id],['کاربر',r=>r.name||r.phone],['پلن',r=>r.plan],['وضعیت',r=>r.status],['مبلغ',r=>r.amount],['شروع',r=>r.started_at],['انقضا',r=>r.expires_at]],
+  rows:()=>store.adminSubscriptions(),
+ },
+ listings:{
+  file:'listings',
+  columns:[['توکن',r=>r.token],['عنوان',r=>r.title],['شهر',r=>r.city],['قیمت',r=>r.price],['امتیاز',r=>r.score],['دسته',r=>r.category],['وضعیت',r=>r.status],['آخرین مشاهده',r=>r.last_seen_at]],
+  rows:()=>store.adminListings(),
+ },
+}
+app.get('/api/admin/export/:kind',adminOnly,(req,res)=>{
+ const spec=EXPORTS[String(req.params.kind)]
+ if(!spec)return res.status(404).json({error:'UNKNOWN_EXPORT'})
+ const columns=spec.columns.map(([label,get])=>({label,get}))
+ // The BOM is what makes Excel open a UTF-8 Persian CSV without mojibake.
+ const body='\uFEFF'+toCsv(columns,spec.rows())
+ store.audit(req.user.id,'export',spec.file,'csv',{rows:body.split('\n').length-1})
+ res.set('Content-Type','text/csv; charset=utf-8')
+ res.set('Content-Disposition',`attachment; filename="khodroto-${spec.file}-${new Date().toISOString().slice(0,10)}.csv"`)
+ res.send(body)
+})
+
+// --- Manual reference prices -------------------------------------------------
+app.get('/api/admin/reference/manual',adminOnly,(_req,res)=>res.json({items:store.manualReferences()}))
+app.post('/api/admin/reference/manual',adminOnly,(req,res)=>{
+ const cohortKey=String(req.body?.cohortKey||'').trim()
+ const year=Number(req.body?.year)||0
+ const price=Math.round(Number(req.body?.price)||0)
+ if(!cohortKey||!year||price<=0)return res.status(400).json({error:'INVALID_REFERENCE'})
+ store.upsertManualReference({cohortKey,year,price,label:String(req.body?.label||'').slice(0,80),trim:String(req.body?.trim||'').slice(0,40)})
+ loadReferenceFromStore()
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'upsert','reference_manual',`${cohortKey}|${year}`,{price})
+ res.json({ok:true,items:store.manualReferences()})
+})
+app.delete('/api/admin/reference/manual',adminOnly,(req,res)=>{
+ const removed=store.deleteManualReference(String(req.query.cohortKey||''),Number(req.query.year)||0,String(req.query.trim||''))
+ if(!removed)return res.status(404).json({error:'NOT_FOUND'})
+ loadReferenceFromStore()
+ marketAnalysisCache.clear()
+ store.audit(req.user.id,'delete','reference_manual',String(req.query.cohortKey||''))
+ res.json({ok:true,items:store.manualReferences()})
+})
 app.patch('/api/admin/users/:id',adminOnly,(req,res)=>{const role=['user','admin'].includes(req.body.role)?req.body.role:'user';store.setUserRole(Number(req.params.id),role);store.audit(req.user.id,'update_role','user',req.params.id,{role});res.json({ok:true})})
 app.get('/api/admin/subscriptions',adminOnly,(_req,res)=>res.json({items:store.adminSubscriptions()}))
 app.patch('/api/admin/subscriptions/:id',adminOnly,(req,res)=>{const status=['active','expired','cancelled','pending'].includes(req.body.status)?req.body.status:'pending';store.setSubscriptionStatus(Number(req.params.id),status);store.audit(req.user.id,'update_status','subscription',req.params.id,{status});res.json({ok:true})})
@@ -483,6 +552,7 @@ app.patch('/api/admin/plans/:id',adminOnly,(req,res)=>{const items=store.savePla
 app.get('/api/admin/settings',adminOnly,(_req,res)=>res.json({settings:store.settings()}))
 app.patch('/api/admin/settings',adminOnly,(req,res)=>{
  const settings=store.updateSettings(req.body||{})
+ syncProviderOverrides()
  // Scoring policy lives in settings now, so a saved change must invalidate the
  // memoised analysis — otherwise retuning the band appears to do nothing for two
  // minutes and the operator concludes the panel is broken.
@@ -611,6 +681,22 @@ const sellerPublicMin=()=>{const fromSettings=Number(store.settings().seller_rep
  * back to the environment and then to the defaults. Tuning the single most
  * important policy in the product should not require SSH access to a .env file.
  */
+// Push the panel's source toggles into the provider registry. Called at boot and
+// after every settings save so a flipped switch takes effect on the next crawl.
+function syncProviderOverrides(){
+ const settings=store.settings()
+ const overrides={}
+ for(const [settingKey,envKey] of Object.entries({
+  source_bama:'BAMA_ENABLED',source_sheypoor:'SHEYPOOR_ENABLED',source_ring:'RING_ENABLED',
+  source_khodro45:'KHODRO45_ENABLED',source_hamrahmechanic:'HAMRAH_LISTINGS_ENABLED',
+ })){
+  const value=settings[settingKey]
+  if(value==='true'||value==='false')overrides[envKey]=value
+ }
+ setProviderOverrides(overrides)
+ return overrides
+}
+
 function visibilityPolicy(){
  const settings=store.settings()
  const pick=(settingKey,envKey)=>{
@@ -771,6 +857,7 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
 // Warm the default market cache now and refresh it every ten minutes. A stale cache is
 // served immediately while the next crawl runs in the background.
 const warmMarketCache = () => refreshConfiguredMarket().then(result=>console.log(`[divar] refreshed ${result.total} listings across ${result.cities||0} cities and ${result.scopes||0} categories`)).catch(error => console.warn(`[divar:warmup] ${error.code || 'ERROR'}: ${error.message}`))
+syncProviderOverrides()
 loadReferenceFromStore()
 
 // Reference sources publish a few times a day, so polling every couple of minutes

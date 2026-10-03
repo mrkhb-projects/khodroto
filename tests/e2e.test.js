@@ -238,9 +238,19 @@ describe('e2e · SEO', () => {
 })
 
 describe('e2e · admin operations surface', () => {
-  it('guards the new endpoints behind the admin session', async () => {
-    expect((await get('/api/admin/health')).status).toBe(401)
-    expect((await get('/api/admin/sellers')).status).toBe(401)
+  it('guards every new endpoint behind the admin session', async () => {
+    for (const route of ['/api/admin/health', '/api/admin/sellers', '/api/admin/reference/manual',
+      '/api/admin/export/users', '/api/admin/export/listings', '/api/admin/export/subscriptions']) {
+      expect((await get(route)).status, route).toBe(401)
+    }
+    expect((await get('/api/admin/reference/manual', { method: 'DELETE' })).status).toBe(401)
+  })
+})
+
+describe('e2e · old admin surface still guarded', () => {
+  it('still guards the pre-existing endpoints', async () => {
+    expect((await get('/api/admin/users')).status).toBe(401)
+    expect((await get('/api/admin/settings')).status).toBe(401)
   })
 })
 
