@@ -71,22 +71,29 @@ function normalizeKenarSearchItem(post) {
   }
 }
 
+function cleanFreshness(text = '') {
+  const first = String(text || '').split(' · ')[0].trim()
+  if (!first || /^(در|از)\s/.test(first)) return 'تازه'
+  return first
+}
+
 function normalizeWebItem(widget) {
   const data = widget?.data || {}
   const payload = data.action?.payload || {}
   const webInfo = payload.web_info || {}
   const price = parseNumber(data.middle_description_text)
+  const title = data.title || 'خودرو'
   return {
     id: data.token || payload.token,
     token: data.token || payload.token,
-    title: data.title || 'خودرو',
-    year: 0,
+    title,
+    year: extractYearFromText(title),
     km: 0,
     color: '—',
     city: [webInfo.city_persian, webInfo.district_persian].filter(Boolean).join('، ') || 'دیوار',
     price,
     priceText: data.middle_description_text || (price ? String(price) : 'توافقی'),
-    freshness: (data.bottom_description_text || '').split(' در ')[0] || 'تازه',
+    freshness: cleanFreshness(data.bottom_description_text),
     link: (data.token || payload.token) ? `https://divar.ir/v/${data.token || payload.token}` : 'https://divar.ir/s/tehran/car',
     image: data.image_url || null,
   }
@@ -117,6 +124,28 @@ function webApiBase(env) {
   }
 }
 
+const toLatinDigits = value => String(value ?? '').replace(/[۰-۹]/g, digit => '۰۱۲۳۴۵۶۷۸۹'.indexOf(digit))
+
+export function extractYearFromText(text = '') {
+  const raw = String(text || '')
+  const latin = toLatinDigits(raw)
+  let match = latin.match(/(?:مدل|سال)\s*(?:ساخت|تولید)?\s*(13\d{2}|14\d{2}|\d{2})(?!\d)/)
+  if (!match) match = latin.match(/(?:^|\D)(13\d{2}|140\d)(?!\d)/)
+  // Bare two-digit years are very common in Iranian car ads ("پرشیا ۹۱"). Only
+  // accept them when normalizeVehicleYear can map them to a plausible build year.
+  if (!match) match = latin.match(/(?:^|\D)(\d{2})(?!\d)/)
+  if (!match) return 0
+  return normalizeVehicleYear(match[1])
+}
+
+export function normalizeVehicleYear(value) {
+  const year = Number(toLatinDigits(value))
+  if (year >= 1300 && year <= 1415) return year
+  if (year >= 50 && year <= 99) return 1300 + year
+  if (year >= 0 && year <= 10) return 1400 + year
+  return 0
+}
+
 function readDetailFields(detail) {
   const result = { title: '', image: null, year: 0, km: 0, color: '—' }
   for (const section of detail.sections || []) {
@@ -128,7 +157,10 @@ function readDetailFields(detail) {
       for (const field of fields) {
         const label = String(field.title || '')
         if (label.includes('کارکرد')) result.km = parseNumber(field.value)
-        if (label.includes('مدل') || label.includes('سال تولید')) result.year = parseNumber(field.value)
+        if (/سال|مدل/.test(label)) {
+          const year = normalizeVehicleYear(parseNumber(field.value))
+          if (year) result.year = year
+        }
         if (label.includes('رنگ')) result.color = field.value || result.color
       }
     }

@@ -6,6 +6,8 @@ import { createDivarService, discoverDivarVehicleCatalog, DivarUpstreamError } f
 import { publicVehicleCatalog } from './src/server/catalog.js'
 import { createDatabase } from './src/server/database.js'
 import { canViewRiskInsights, listingForViewer } from './src/server/access.js'
+import { analyzeListings, filterListingItems, summarizeMarket } from './src/server/analyzer.js'
+import { collectExternalListings, providerStatuses } from './src/server/providers/index.js'
 
 const app = express()
 const PORT = process.env.PORT || 5173
@@ -43,7 +45,30 @@ async function refreshConfiguredMarket(){
   const categories=['light','heavy','motorcycles','parts-accessories','vehicles-services'],batchSize=Math.max(1,Number(process.env.DIVAR_CITY_BATCH_SIZE)||40)
   const cityBatches=Array.from({length:Math.ceil(cityIds.length/batchSize)},(_,index)=>cityIds.slice(index*batchSize,(index+1)*batchSize))
   let total=0,pages=0,scopes=0
-  for(const category of categories)for(const batch of cityBatches){const result=await divar.refresh({category,cityIds:batch});await persistCrawl(result);total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
+  // Divar rejects multi-city batches that contain district ids ("multi-city does not
+  // support districts"). Retry such batches city by city so one district never
+  // poisons the whole batch.
+  for(const category of categories)for(const batch of cityBatches){
+    const queue=[[...batch]]
+    while(queue.length){
+      const ids=queue.shift()
+      try{const result=await divar.refresh({category,cityIds:ids});await persistCrawl(result);total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
+      catch(error){
+        if(ids.length>1&&(Number(error.status)===400||String(error.message||'').includes('districts'))){for(const id of ids)queue.push([id]);continue}
+        console.warn(`[divar] skipping ${category} cities:${ids.join(',')} → ${error.code||'ERROR'}: ${error.message}`)
+      }
+    }
+  }
+  // Additional market sources (باما/شیپور/رینگ) — enabled via env flags. Failures are
+  // logged, never fatal, so the Divar refresh is always the reliable backbone.
+  for(const category of categories){
+    const externalResults=await collectExternalListings({category,pages:3})
+    for(const result of externalResults){
+      if(!result.items?.length){if(result.note)console.warn(`[${result.provider||'external'}] ${category} → ${result.note}`);continue}
+      store.storeCrawl({category,scope:result.scope||`${result.provider}:${category}`,items:result.items},{category})
+      total+=result.items.length;scopes++
+    }
+  }
   return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length}
  }finally{marketRefreshRunning=false}
 }
@@ -149,7 +174,48 @@ app.post('/api/admin/crawler/refresh',adminOnly,async(req,res)=>{try{const resul
 
 app.get('/api/integration/status', (_req, res) => {
   const status = divar.status()
-  res.json({ ...status, source: status.provider === 'kenar' ? 'Kenar-e-Divar' : status.provider === 'web' ? 'Divar public web endpoints' : 'disabled', documentation: status.provider === 'kenar' ? 'https://github.com/divar-ir/kenar-docs' : 'https://github.com/shojaee76-cmyk/divar-mcp' })
+  res.json({ ...status, source: status.provider === 'kenar' ? 'Kenar-e-Divar' : status.provider === 'web' ? 'Divar public web endpoints' : 'disabled', additionalSources: providerStatuses(), documentation: status.provider === 'kenar' ? 'https://github.com/divar-ir/kenar-docs' : 'https://github.com/shojaee76-cmyk/divar-mcp' })
+})
+
+// Re-score stored listings against the current market picture (per model/year/color
+// averages) and memoize per database signature so repeat searches stay instant.
+const marketAnalysisCache=new Map()
+function marketAnalysis(category){
+ const signature=store.listingsSignature(category)
+ const cached=marketAnalysisCache.get(category)
+ if(cached&&cached.signature===signature&&Date.now()-cached.stamp<120000)return cached
+ const payloads=store.listPayloads(category)
+ const items=analyzeListings(payloads,{category,includeNoPhoto:true}).items
+ const summary=summarizeMarket(payloads,{minSamples:4})
+ const byModel=new Map(summary.models.map(model=>[model.model,model]))
+ const entry={signature,stamp:Date.now(),items,summary,byModel}
+ marketAnalysisCache.set(category,entry)
+ return entry
+}
+
+// When results clearly belong to one vehicle model, attach that model's pricing
+// knowledge (per year/color averages) — like Dallal's «شناسنامهٔ قیمت» for cars.
+function marketIntelFor(items,entry){
+ if(!items.length)return null
+ const counts=new Map()
+ for(const item of items)if(item.model)counts.set(item.model,(counts.get(item.model)||0)+1)
+ const [modelKey,hits]=[...counts.entries()].sort((a,b)=>b[1]-a[1])[0]
+ if(!modelKey||hits<Math.max(3,Math.ceil(items.length*.5)))return null
+ const row=entry.byModel.get(modelKey)
+ if(!row)return null
+ const years=new Set(items.map(item=>Number(item.year)||0).filter(Boolean))
+ const byYear=years.size===1?row.byYear.find(year=>year.year===[...years][0]):null
+ return{model:modelKey,total:row.samples,avg:row.avg,median:row.median,min:row.min,max:row.max,yearFocus:byYear?{year:byYear.year,samples:byYear.samples,avg:byYear.avg,median:byYear.median}:null}
+}
+
+app.get('/api/market/models',(req,res)=>{
+ try{
+  const category=['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(String(req.query.category))?String(req.query.category):'light'
+  const limit=Math.min(50,Math.max(1,Number(req.query.limit)||24))
+  const entry=marketAnalysis(category)
+  res.set('Cache-Control','public, max-age=300')
+  res.json({category,generatedAt:new Date(entry.stamp).toISOString(),totalModels:entry.summary.totalModels,totalListings:entry.summary.totalListings,models:entry.summary.models.slice(0,limit)})
+ }catch(error){res.status(500).json({error:'MARKET_STATS_FAILED',message:error.message})}
 })
 
 app.get('/api/listings', async (req, res) => {
@@ -158,13 +224,25 @@ app.get('/api/listings', async (req, res) => {
   const publicListing=item=>listingForViewer(item,canViewRisk)
   try {
     const filters=searchFilters(req.query);if(!canViewRisk)filters.suspiciousOnly=false
+    const offset = Math.max(0, Number(req.query.offset) || 0)
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
+    // Serve instantly from the SQLite market database whenever possible; the background
+    // warm-up loop keeps it fresh. Falling back to a live Divar crawl is slow (full
+    // category sweeps fetch hundreds of pages) and made search feel broken.
+    const cityNameOf=new Map(publicVehicleCatalog(store.settings()).cities.map(city=>[String(city.id),city.name]))
+    filters.cityNames=(filters.cityIds||[]).map(id=>cityNameOf.get(String(id))).filter(Boolean)
+    const entry=marketAnalysis(filters.category)
+    const stored=filterListingItems(applyBudget(entry.items, String(req.query.budget||'')), filters)
+    const storedFiltered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? stored.filter(item=>item.suspicious) : stored
+    if(storedFiltered.length){
+      res.set('Cache-Control', 'private, max-age=60')
+      return res.json({ source:'db', category:filters.category, items:storedFiltered.slice(offset,offset+limit).map(publicListing), totalMatches:storedFiltered.length, offset, limit, riskInsightsUnlocked:canViewRisk, marketIntel:marketIntelFor(storedFiltered,entry), integration:divar.status() })
+    }
     const result = await divar.listings(filters)
     if (!result.cached) await persistCrawl(result)
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
     const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
-    const offset = Math.max(0, Number(req.query.offset) || 0)
-    const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 6))
     res.set('Cache-Control', 'private, max-age=60')
     res.json({ ...publicResult, items: filtered.slice(offset, offset + limit).map(publicListing), totalMatches: filtered.length, offset, limit, riskInsightsUnlocked:canViewRisk, integration: divar.status() })
   } catch (error) {
