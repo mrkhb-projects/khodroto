@@ -137,3 +137,58 @@ describe('listing lifecycle', () => {
     expect(store.activeIntegrations('payment')[0].secret).toBe('backup-secret')
   })
 })
+
+describe('listing storage ceiling', () => {
+  it('keeps only the freshest listings when the row cap is exceeded', () => {
+    const store = database()
+    store.storeCrawl({ category: 'light', items: Array.from({ length: 50 }, (_, i) => item(`t${i}`)) }, { category: 'light' })
+    // Give every row a distinct last_seen_at so "freshest 30" is unambiguous:
+    // t0 is the oldest, t49 the newest.
+    const update = store.db.prepare('UPDATE listings SET last_seen_at=? WHERE token=?')
+    for (let i = 0; i < 50; i++) update.run(new Date(Date.now() - (50 - i) * 60000).toISOString(), `t${i}`)
+
+    const result = store.trimListings({ maxRows: 30 })
+
+    expect(result.removedByCap).toBe(20)
+    expect(result.remaining).toBe(30)
+    // The survivors must be the recent ones, not an arbitrary slice.
+    expect(row(store, 't49')).toBeTruthy()
+    expect(row(store, 't20')).toBeTruthy()
+    expect(row(store, 't19')).toBeFalsy()
+    expect(row(store, 't0')).toBeFalsy()
+  })
+
+  it('drops listings older than the retention window and their dependent rows', () => {
+    const store = database()
+    store.storeCrawl({ category: 'light', items: [item('fresh'), item('ancient')] }, { category: 'light' })
+    store.db.prepare('UPDATE listings SET last_seen_at=? WHERE token=?').run(new Date(Date.now() - 400 * 86400000).toISOString(), 'ancient')
+
+    const result = store.trimListings({ retentionDays: 30 })
+
+    expect(result.removedByAge).toBe(1)
+    expect(row(store, 'fresh')).toBeTruthy()
+    expect(row(store, 'ancient')).toBeFalsy()
+    // price_history/observations for a dropped token must not linger.
+    expect(store.db.prepare('SELECT COUNT(*) n FROM price_history WHERE token=?').get('ancient').n).toBe(0)
+    expect(store.db.prepare('SELECT COUNT(*) n FROM listing_observations WHERE token=?').get('ancient').n).toBe(0)
+  })
+
+  it('never touches saved listings, which keep their own payload copy', () => {
+    const store = database()
+    store.storeCrawl({ category: 'light', items: [item('kept')] }, { category: 'light' })
+    store.db.prepare('INSERT INTO users(phone,created_at) VALUES(?,?)').run('09120000000', new Date().toISOString())
+    const user = store.db.prepare('SELECT id FROM users').get()
+    store.saveListing(user.id, 'kept', item('kept'))
+
+    store.trimListings({ retentionDays: 0, maxRows: 0 })
+    store.db.prepare('DELETE FROM listings').run()
+
+    expect(store.savedListings(user.id)).toHaveLength(1)
+  })
+
+  it('does nothing when no ceiling is configured', () => {
+    const store = database()
+    store.storeCrawl({ category: 'light', items: Array.from({ length: 10 }, (_, i) => item(`n${i}`)) }, { category: 'light' })
+    expect(store.trimListings({})).toMatchObject({ removedByAge: 0, removedByCap: 0, remaining: 10 })
+  })
+})

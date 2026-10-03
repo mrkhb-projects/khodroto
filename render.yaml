@@ -3,7 +3,9 @@ services:
     name: khodroto-demo
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    # --include=dev is required: NODE_ENV=production below would otherwise make
+    # npm skip vite, which is a build-only dependency.
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: node server.js
     healthCheckPath: /api/stats/public
     autoDeploy: true

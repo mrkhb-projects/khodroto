@@ -91,6 +91,35 @@ describe('Divar integration', () => {
     expect(second.cached).toBe(true)
     expect(requests).toBe(1)
   })
+
+  it('caps the search cache so the persisted file cannot fill the disk', async () => {
+    const fetchImpl = async (_url, options) => options.method === 'POST'
+      ? { ok: true, json: async () => ({ posts: [] }) }
+      : { ok: true, json: async () => ({}) }
+    const service = createDivarService({
+      env: { KENAR_API_KEY: 'secret', DIVAR_CACHE_MAX_ENTRIES: '5' },
+      fetchImpl,
+      cacheFile: null,
+    })
+    for (let index = 0; index < 20; index++) await service.listings({ city: `city-${index}` })
+    const status = service.status()
+    expect(status.cacheLimit).toBe(5)
+    expect(status.cachedSearches).toBeLessThanOrEqual(5)
+  })
+
+  it('drops cache entries older than the configured maximum age', async () => {
+    const fetchImpl = async (_url, options) => options.method === 'POST'
+      ? { ok: true, json: async () => ({ posts: [] }) }
+      : { ok: true, json: async () => ({}) }
+    const service = createDivarService({
+      env: { KENAR_API_KEY: 'secret', DIVAR_CACHE_MAX_AGE_HOURS: '0.0000001' },
+      fetchImpl,
+    })
+    await service.listings({ city: 'tehran' })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    await service.listings({ city: 'karaj' })
+    expect(service.status().cachedSearches).toBe(1)
+  })
 })
 
 describe('vehicle year extraction from listing titles', () => {
