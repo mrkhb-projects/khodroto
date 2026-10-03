@@ -1042,6 +1042,27 @@ function startBackgroundWork(){
 if(process.env.PREVIEW_ROUTE&&process.env.NODE_ENV!=='production')app.get('/',(_req,res)=>res.redirect(process.env.PREVIEW_ROUTE))
 app.get('/admin',(_req,res)=>res.redirect(302,'/khodroto-admin'))
 const dist = path.resolve('dist')
+
+// An unknown /api/* path used to fall through to the SPA and answer 200 with HTML.
+// A caller then got a parse error instead of a 404, a mistyped endpoint looked
+// healthy to monitoring, and nothing distinguished "route gone" from "page".
+app.use('/api', (req, res) => res.status(404).json({ error: 'NOT_FOUND', path: req.originalUrl }))
+
+// A malformed body or an oversized upload is the client's mistake, not a server
+// fault. Express's default handler prints a full stack for each one, which buries
+// the failures that actually matter in production logs.
+app.use((error, req, res, _next) => {
+  const status = Number(error?.status || error?.statusCode) || 500
+  const clientFault = status >= 400 && status < 500
+  if (clientFault) console.warn(`[http] ${status} ${req.method} ${req.originalUrl} — ${error.type || error.message}`)
+  else console.error(`[http] 500 ${req.method} ${req.originalUrl}`, error)
+  if (res.headersSent) return
+  const body = clientFault
+    ? { error: error.type === 'entity.too.large' ? 'PAYLOAD_TOO_LARGE' : 'BAD_REQUEST' }
+    : { error: 'INTERNAL_ERROR' }
+  res.status(status).json(body)
+})
+
 app.use(express.static(dist, { maxAge: '1h', index: false, redirect: false }))
 app.use((req, res, next) => req.method === 'GET' && req.accepts('html') ? res.sendFile(path.join(dist, 'index.html')) : next())
 app.listen(PORT, '0.0.0.0', () => {

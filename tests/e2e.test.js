@@ -237,6 +237,47 @@ describe('e2e · SEO', () => {
   })
 })
 
+describe('e2e · API error handling', () => {
+  it('answers an unknown /api path with JSON 404, not the SPA shell', async () => {
+    // It used to fall through to the catch-all and reply 200 text/html, so a
+    // mistyped endpoint looked healthy and callers got a parse error.
+    const response = await get('/api/definitely-not-a-route')
+    expect(response.status).toBe(404)
+    expect(response.headers.get('content-type')).toContain('application/json')
+    expect((await response.json()).error).toBe('NOT_FOUND')
+  })
+
+  it('still serves the SPA for an unknown page', async () => {
+    const response = await get('/a-page-that-does-not-exist')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+  })
+
+  it('rejects a malformed body with a clean 400', async () => {
+    const response = await get('/api/auth/request-otp', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{broken',
+    })
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toBe('BAD_REQUEST')
+  })
+
+  it('rejects an oversized body rather than buffering it', async () => {
+    const response = await get('/api/auth/request-otp', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '9'.repeat(100000) }),
+    })
+    expect(response.status).toBe(413)
+    expect((await response.json()).error).toBe('PAYLOAD_TOO_LARGE')
+  })
+
+  it('survives hostile query strings without a 500', async () => {
+    for (const query of ['limit=abc', 'limit=-5', 'offset=999999', 'category=../../etc', 'minPrice=9e99', 'city=1;DROP TABLE users']) {
+      const response = await get(`/api/listings?${query}`)
+      expect(response.status, query).toBe(200)
+    }
+  })
+})
+
 describe('e2e · dealer tools are gated', () => {
   it('refuses the showroom dashboard to anyone without the plan', async () => {
     expect((await get('/api/dealer/summary')).status).toBe(401)
