@@ -9,19 +9,21 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
-    "pretest": "npm run build"
+    "pretest": "npm run build",
+    "prune": "node scripts/prune-storage.mjs",
+    "prune:apply": "node scripts/prune-storage.mjs --apply"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "express": "latest",
-    "lucide-react": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "vite": "latest"
+    "express": "latest"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.3",
+    "@vitejs/plugin-react": "latest",
     "jsdom": "^30.1.1",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest",
     "vitest": "latest"
   }
 }

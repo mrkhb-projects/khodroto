@@ -85,15 +85,66 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
   return{stored:items.length,observed:observed.length,reconciled:Boolean(options.reconcile)}
  }
  function storeListings(items=[]){return storeCrawl({items},{reconcile:false})}
+ // Lean storage mode: remember only THAT a token was seen today, never the ad
+ // itself. A row here costs ~40 bytes against ~3 KB for a full listing, which is
+ // what keeps "بررسی‌شده امروز" and the daily counters alive while the raw ads are
+ // discarded straight after the averages have been distilled from them.
+ function recordObservations(tokens=[],category='light'){
+  const unique=[...new Set(tokens.filter(Boolean).map(String))]
+  if(!unique.length)return{observed:0}
+  const observation=db.prepare('INSERT OR IGNORE INTO listing_observations(token,observed_date,category) VALUES(?,?,?)')
+  const today=tehranDate()
+  db.exec('BEGIN')
+  try{for(const token of unique)observation.run(token,today,category);db.exec('COMMIT')}
+  catch(error){db.exec('ROLLBACK');throw error}
+  return{observed:unique.length}
+ }
+ // The listings table is a rolling working set used to score and rank, NOT an
+ // archive. What has to survive is the aggregate in market_baseline (~286 bytes
+ // per cohort); one raw listing with its payload costs ~3 KB, so keeping every
+ // listing forever is exactly what fills a small hosting quota. Bound the set by
+ // age and by row count, and drop whatever the removed tokens left behind.
+ function trimListings({maxRows=0,retentionDays=0}={}){
+  const seenAt='COALESCE(last_seen_at,first_seen_at)'
+  const removedByAge=retentionDays>0
+   ? db.prepare(`DELETE FROM listings WHERE ${seenAt}<?`).run(new Date(Date.now()-retentionDays*86400000).toISOString()).changes
+   : 0
+  let removedByCap=0
+  if(maxRows>0&&db.prepare('SELECT COUNT(*) n FROM listings').get().n>maxRows){
+   // Keep the freshest maxRows listings; everything older than the cut goes.
+   removedByCap=db.prepare(`DELETE FROM listings WHERE token IN (SELECT token FROM listings ORDER BY ${seenAt} DESC LIMIT -1 OFFSET ?)`).run(maxRows).changes
+  }
+  let orphans=0
+  if(removedByAge||removedByCap){
+   for(const table of ['price_history','listing_details','listing_observations'])
+    orphans+=db.prepare(`DELETE FROM ${table} WHERE token NOT IN (SELECT token FROM listings)`).run().changes
+  }
+  return{removedByAge,removedByCap,orphans,remaining:db.prepare('SELECT COUNT(*) n FROM listings').get().n}
+ }
  function verificationCandidates(category='light',limit=25){return db.prepare(`SELECT token,status,missing_count FROM listings WHERE category=? AND status IN ('stale','inactive') ORDER BY missing_count DESC,last_seen_at ASC LIMIT ?`).all(category,limit)}
  function markListingVerification(token,state){const stamp=now();if(state==='removed')return db.prepare(`UPDATE listings SET status='removed',removed_at=COALESCE(removed_at,?),last_verified_at=? WHERE token=?`).run(stamp,stamp,token);if(state==='active')return db.prepare(`UPDATE listings SET status='active',missing_count=0,last_seen_at=?,last_verified_at=?,inactive_at=NULL,removed_at=NULL WHERE token=?`).run(stamp,stamp,token)}
+ // Counters the lean mode cannot derive from the (now empty) listings table are
+ // written here after each sweep. Four integers in `settings` replace what used to
+ // require keeping every ad on disk.
+ function recordSweepStats({total=0,golden=0,active=0}={}){
+  const stamp=now()
+  const put=db.prepare('INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
+  put.run('sweep_total_listings',String(Math.max(0,Number(total)||0)),stamp)
+  put.run('sweep_golden_opportunities',String(Math.max(0,Number(golden)||0)),stamp)
+  put.run('sweep_active_listings',String(Math.max(0,Number(active)||0)),stamp)
+  put.run('sweep_recorded_at',stamp,stamp)
+ }
  function publicStats(){
   const today=tehranDate()
+  const stored=db.prepare('SELECT COUNT(*) n FROM listings').get().n
+  // Lean mode keeps no ads, so fall back to the counters captured during the last
+  // sweep instead of reporting a site with zero listings.
+  const swept=key=>Number(db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value)||0
   return{
    analyzedToday:db.prepare('SELECT COUNT(*) n FROM listing_observations WHERE observed_date=?').get(today).n,
-   totalListings:db.prepare('SELECT COUNT(*) n FROM listings').get().n,
-   goldenOpportunities:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active' AND score>=85").get().n,
-   activeListings:db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active'").get().n,
+   totalListings:stored||swept('sweep_total_listings'),
+   goldenOpportunities:stored?db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active' AND score>=85").get().n:swept('sweep_golden_opportunities'),
+   activeListings:stored?db.prepare("SELECT COUNT(*) n FROM listings WHERE status='active'").get().n:swept('sweep_active_listings'),
    date:today,
   }
  }
@@ -457,7 +508,7 @@ export function createDatabase(file=process.env.DATABASE_FILE||'data/khodroto.db
    .map(row=>{try{return{...JSON.parse(row.payload||'{}'),lastSeenAt:row.last_seen_at}}catch{return null}})
    .filter(Boolean)
  }
- return{db,storeListings,storeCrawl,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,notifications,unreadNotifications,markNotificationsRead,saveListing,unsaveListing,savedListings,savedTokens,analyticsSeries,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,discountCodes,saveDiscountCode,deleteDiscountCode,discountByCode,applyDiscount,recordPaymentOrder,adminOrders,updateOrder,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,userByPhone,userById,createAdminUser,createAdminSubscription,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
+ return{db,storeListings,storeCrawl,trimListings,recordObservations,recordSweepStats,detailCache,knownTokens,enabledAlerts,alertAlreadySent,recordAlertDelivery,pendingAlertDeliveries,markAlertDelivered,alertHistory,notifications,unreadNotifications,markNotificationsRead,saveListing,unsaveListing,savedListings,savedTokens,analyticsSeries,recordSellerStats,sellerReputation,worstSellers,snapshotBaseline,baselineTrend,pruneBaselineHistory,replaceReferencePrices,referencePrices,referenceMeta,upsertManualReference,deleteManualReference,manualReferences,logReferenceRun,referenceRuns,replaceBaseline,baselineRows,baselineLookup,baselineMeta,recentPayloads,verificationCandidates,markListingVerification,publicStats,plans,savePlan,discountCodes,saveDiscountCode,deleteDiscountCode,discountByCode,applyDiscount,recordPaymentOrder,adminOrders,updateOrder,dealerInventory,saveDealerInventory,deleteDealerInventory,dealerLeads,saveDealerLead,deleteDealerLead,integrations,saveIntegration,deleteIntegration,activeIntegrations,slides,saveSlide,deleteSlide,audit,audits,userByPhone,userById,createAdminUser,createAdminSubscription,requestOtp,verifyOtp,userFromToken,createAdminSession,listPayloads,listingsSignature,
  logout:t=>db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(t||'')),
  updateUser:(id,data)=>{db.prepare('UPDATE users SET name=?,city=? WHERE id=?').run(data.name,data.city,id);return db.prepare('SELECT * FROM users WHERE id=?').get(id)},
  listHistory:token=>db.prepare('SELECT price,recorded_at FROM price_history WHERE token=? ORDER BY recorded_at').all(token),

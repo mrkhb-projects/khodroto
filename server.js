@@ -10,6 +10,7 @@ import { publicVehicleCatalog } from './src/server/catalog.js'
 import { createDatabase } from './src/server/database.js'
 import { canViewRiskInsights, listingForViewer } from './src/server/access.js'
 import { analyzeListings, filterListingItems, summarizeMarket, buildPriceIndex, exportBaseline, DEFAULT_WINDOW_DAYS } from './src/server/analyzer.js'
+import { baselineIndex } from './src/server/pricing.js'
 import { provinces, citiesOf, groupedCities, nearestCity, resolveCity } from './src/server/locations.js'
 import { collectReferencePrices, buildReferenceIndex, referenceStatuses, sourceCatalogue } from './src/server/reference/index.js'
 import { providerCatalogue } from './src/server/providers/index.js'
@@ -67,6 +68,24 @@ const startupWarmEnabled = envFlag('STARTUP_WARM', true)
 // then defer the expensive Divar/reference warmup until the app is already serving.
 const startupWarmDelayMs = envNumber('STARTUP_WARM_DELAY_MS', isProduction ? 60_000 : 100, { min: 0, max: 3_600_000 })
 const marketRefreshIntervalMs = envNumber('MARKET_REFRESH_INTERVAL_MINUTES', Math.ceil(cacheTtl / 60_000), { min: 5, max: 1440 }) * 60 * 1000
+// Storage ceiling for the raw listing working set. The crawl runs every few
+// minutes, so without a bound the table grows for as long as the server lives
+// (~3 KB per listing) and eventually fills the hosting quota, which silently
+// breaks deploys. The averages that must outlive the raw rows are already kept
+// separately in market_baseline. Set MARKET_MAX_LISTINGS=0 to disable the cap.
+const marketMaxListings = envNumber('MARKET_MAX_LISTINGS', 25_000, { min: 0, max: 5_000_000 })
+const marketRetentionDays = envNumber('MARKET_RETENTION_DAYS', 0, { min: 0, max: 3650 })
+// MARKET_STORAGE_MODE=lean keeps ONLY the distilled averages on disk. The crawl
+// still happens, but the ads it walks are summarised in memory and thrown away,
+// so the database stops being a function of uptime. Search then answers from the
+// live sources and scores against the stored baseline. 'full' is the classic
+// behaviour: every ad is persisted and search is served from the database.
+const leanStorage = String(process.env.MARKET_STORAGE_MODE || 'full').toLowerCase() === 'lean'
+// How many ads one sweep may hold in memory while the averages are computed.
+// Only a slim projection is kept (~150 bytes each), never the full payload.
+const leanSampleCap = envNumber('MARKET_LEAN_SAMPLE', 40_000, { min: 1_000, max: 500_000 })
+// How often the stored averages are rebuilt from a fresh sweep.
+const baselineRefreshMs = envNumber('BASELINE_REFRESH_DAYS', 7, { min: 0, max: 365 }) * 86_400_000
 const store = createDatabase()
 // detailCache makes colour/mileage enrichment cumulative across crawl cycles;
 // getReference lets the crawl screen bait prices the moment they arrive.
@@ -87,9 +106,24 @@ const adminLoginAttempts=new Map()
 const adminCookie=result=>`khodroto_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200${process.env.NODE_ENV==='production'?'; Secure':''}`
 const safeEqual=(left,right)=>{const a=Buffer.from(String(left||'')),b=Buffer.from(String(right||''));return a.length===b.length&&crypto.timingSafeEqual(a,b)}
 
+// A slim projection is everything the price index actually reads: identity comes
+// from the title, the cohort from year/colour, and the window from the timestamp.
+// Keeping this instead of the payload is the whole point of lean mode.
+const leanProjection = item => ({
+  id: item.id, token: item.token || item.id, title: item.title, price: item.price,
+  year: item.year, color: item.color, km: item.km, city: item.city, link: item.link,
+  image: item.image ? '1' : '', lastSeenAt: item.lastSeenAt || new Date().toISOString(),
+})
+
 async function persistCrawl(result, { verifyMissing = true } = {}) {
   const category = result.category || 'light'
   const reconciliation = Boolean(result.fullSnapshot && !result.cached)
+  if (leanStorage) {
+    // Remember only that these tokens existed today; the ads themselves are not
+    // written to disk at all.
+    store.recordObservations(result.observedTokens || (result.items || []).map(item => item.id), category)
+    return
+  }
   store.storeCrawl(result, { category, scope: result.scope, reconcile: reconciliation })
   if (!reconciliation || !verifyMissing) return
   const candidates = store.verificationCandidates(category, 25)
@@ -128,6 +162,15 @@ async function refreshConfiguredMarket(){
   const categories=['light','heavy','motorcycles','parts-accessories','vehicles-services'],batchSize=Math.max(1,Number(process.env.DIVAR_CITY_BATCH_SIZE)||40)
   const cityBatches=Array.from({length:Math.ceil(cityIds.length/batchSize)},(_,index)=>cityIds.slice(index*batchSize,(index+1)*batchSize))
   let total=0,pages=0,scopes=0
+  // Lean mode distils the sweep in memory. Only slim projections are kept, and
+  // the sample is capped so a nationwide sweep cannot exhaust a shared host's RAM.
+  const leanSamples=leanStorage?new Map():null
+  const collectLean=(category,items=[])=>{
+   if(!leanSamples)return
+   const bucket=leanSamples.get(category)||[]
+   for(const item of items){if(bucket.length>=leanSampleCap)break;if(Number(item?.price)>0)bucket.push(leanProjection(item))}
+   leanSamples.set(category,bucket)
+  }
   // Divar rejects multi-city batches that contain district ids ("multi-city does not
   // support districts"). Retry such batches city by city so one district never
   // poisons the whole batch.
@@ -136,7 +179,7 @@ async function refreshConfiguredMarket(){
       const queue=[[...batch]]
       while(queue.length){
         const ids=queue.shift()
-        try{const result=await divar.refresh({category,cityIds:ids,...(queryText?{queryText}:{}),...(maxPages?{maxPages}:{})});await persistCrawl(result,{verifyMissing:!queryText});total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
+        try{const result=await divar.refresh({category,cityIds:ids,...(queryText?{queryText}:{}),...(maxPages?{maxPages}:{})});collectLean(category,result.items);await persistCrawl(result,{verifyMissing:!queryText});total+=result.totalAnalyzed||result.items?.length||0;pages+=result.pagesFetched||1;scopes++}
         catch(error){
           if(ids.length>1&&(Number(error.status)===400||String(error.message||'').includes('districts'))){for(const id of ids)queue.push([id]);continue}
           console.warn(`[divar] skipping ${category}${queryText?` query:${queryText}`:''} cities:${ids.join(',')} → ${error.code||'ERROR'}: ${error.message}`)
@@ -150,16 +193,30 @@ async function refreshConfiguredMarket(){
     const externalResults=await collectExternalListings({category,pages:3})
     for(const result of externalResults){
       if(!result.items?.length){if(result.note)console.warn(`[${result.provider||'external'}] ${category} → ${result.note}`);continue}
-      store.storeCrawl({category,scope:result.scope||`${result.provider}:${category}`,items:result.items},{category})
+      collectLean(category,result.items)
+      if(!leanStorage)store.storeCrawl({category,scope:result.scope||`${result.provider}:${category}`,items:result.items},{category})
       total+=result.items.length;scopes++
     }
   }
   // The crawl is only half the job: once fresh listings are stored we immediately
   // recompute the 30-day averages, so the site never scores against stale baselines.
-  const baseline=rebuildMarketBaseline()
+  const baseline=rebuildMarketBaseline(BASELINE_CATEGORIES,{samples:leanSamples})
+  // Lean mode: the sample has served its purpose the moment the averages exist.
+  // Score it once against the fresh baseline to feed alerts and the public
+  // counters, then let it go — nothing of it reaches the disk.
+  if(leanStorage){
+   try{refreshLeanSnapshot(leanSamples)}catch(error){console.warn(`[lean] ${error.message}`)}
+   leanSamples?.clear()
+  }
+  // Order matters: the baseline is distilled FIRST, then the raw rows it was
+  // distilled from are trimmed back to the configured ceiling. The knowledge is
+  // kept, the bulk is not.
+  const trimmed=store.trimListings({maxRows:leanStorage?0:marketMaxListings,retentionDays:leanStorage?1:(marketRetentionDays||MARKET_WINDOW_DAYS)})
+  if(trimmed.removedByAge||trimmed.removedByCap)
+   console.log(`[storage] trimmed ${trimmed.removedByAge} aged + ${trimmed.removedByCap} over-cap listings (+${trimmed.orphans} orphan rows), ${trimmed.remaining} kept`)
   // Fire-and-forget: a failing SMS provider must never break the crawl.
   runAlerts().catch(error=>console.warn(`[alerts] ${error.message}`))
-  return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length,baseline}
+  return{running:false,total,pages,scopes,cities:cityIds.length,categories:categories.length,baseline,trimmed}
  }finally{marketRefreshRunning=false}
 }
 
@@ -367,7 +424,9 @@ export async function runAlerts() {
  try {
   const result = await dispatchAlerts({
    store,
-   itemsFor: category => { try { return marketAnalysis(category).items } catch { return [] } },
+   // Lean mode has no stored ads to scan, so alerts run against the scored
+   // sample the last sweep left in memory.
+   itemsFor: category => { try { return leanStorage ? (leanAlertBuffer.get(category) || []) : marketAnalysis(category).items } catch { return [] } },
    sendSms: sendAlertSms,
   })
   if (result.matched) console.log(`[alerts] ${result.matched} matches · ${result.sent} sent · ${result.queued} queued`)
@@ -1039,11 +1098,13 @@ function recordSellerReputation(items){
 // Step 3 — persist the averages per model / build year / colour so they survive a
 // restart, can be inspected, and can be served without recomputing.
 const BASELINE_CATEGORIES=['light','heavy','motorcycles']
-export function rebuildMarketBaseline(categories=BASELINE_CATEGORIES){
+export function rebuildMarketBaseline(categories=BASELINE_CATEGORIES,{samples=null}={}){
  const results=[]
  for(const category of categories){
   try{
-   const payloads=store.recentPayloads(category,MARKET_WINDOW_DAYS)
+   // Lean mode hands the in-memory sweep sample straight in, because the ads it
+   // was distilled from were never written to disk.
+   const payloads=samples?.get(category)||store.recentPayloads(category,MARKET_WINDOW_DAYS)
    const index=buildPriceIndex(payloads,{categoryHint:category,windowDays:MARKET_WINDOW_DAYS,reference:referenceIndex})
    const baseline=exportBaseline(index,{category})
    const saved=store.replaceBaseline(category,baseline.rows,{windowDays:MARKET_WINDOW_DAYS,generatedAt:baseline.generatedAt})
@@ -1055,6 +1116,53 @@ export function rebuildMarketBaseline(categories=BASELINE_CATEGORIES){
   }catch(error){console.warn(`[baseline] ${category} failed: ${error.message}`);results.push({category,error:error.message})}
  }
  return results
+}
+
+// --- Lean storage mode -------------------------------------------------------
+// In lean mode the persisted averages ARE the memory of the platform. Everything
+// below reads from market_baseline instead of from stored ads.
+const leanAlertBuffer=new Map()
+const leanBaselineCache=new Map()
+const leanModelSummary=new Map()
+
+/** Valuation index rebuilt from the persisted cohorts, cached until they change. */
+function leanBaselineIndexFor(category){
+ const meta=store.baselineMeta(category)
+ const signature=`${meta?.generated_at||''}|${meta?.rows||0}`
+ const cached=leanBaselineCache.get(category)
+ if(cached&&cached.signature===signature)return cached.index
+ const index=baselineIndex(store.baselineRows(category,200000),{generatedAt:meta?.generated_at||null,windowDays:MARKET_WINDOW_DAYS})
+ leanBaselineCache.set(category,{signature,index})
+ return index
+}
+
+/** Score live listings against the stored averages — the lean search path. */
+function scoreAgainstBaseline(items,category){
+ return analyzeListings(items,{
+  category,includeNoPhoto:true,windowDays:MARKET_WINDOW_DAYS,
+  priceIndex:leanBaselineIndexFor(category),reference:referenceIndex,policy:visibilityPolicy(),
+ })
+}
+
+/**
+ * Last act of a lean sweep: score the in-memory sample once against the fresh
+ * baseline so alerts and the public counters keep working, then drop it. The
+ * ads themselves are never written to disk.
+ */
+function refreshLeanSnapshot(samples){
+ if(!samples)return
+ let total=0,golden=0
+ for(const [category,items] of samples){
+  if(!items?.length)continue
+  const analysis=scoreAgainstBaseline(items,category)
+  total+=items.length
+  golden+=analysis.items.filter(item=>Number(item.score)>=85).length
+  // Alerts only need the strongest matches, not the whole sweep.
+  leanAlertBuffer.set(category,analysis.items.filter(item=>Number(item.score)>0).sort((a,b)=>b.score-a.score).slice(0,2000))
+  leanModelSummary.set(category,summarizeMarket(items,{category,windowDays:MARKET_WINDOW_DAYS}))
+ }
+ store.recordSweepStats({total,golden,active:total})
+ console.log(`[lean] summarised ${total} listings into averages, ${golden} golden — nothing persisted`)
 }
 
 // When results clearly belong to one vehicle model, attach that model's pricing
@@ -1076,7 +1184,10 @@ app.get('/api/market/models',(req,res)=>{
  try{
   const category=['light','motorcycles','heavy','parts-accessories','vehicles-services'].includes(String(req.query.category))?String(req.query.category):'light'
   const limit=Math.min(50,Math.max(1,Number(req.query.limit)||24))
-  const entry=marketAnalysis(category)
+  // Lean mode has no stored ads to summarise; serve the summary the last sweep
+  // produced, which is derived from exactly the same population.
+  const summary=leanStorage?leanModelSummary.get(category):null
+  const entry=summary?{stamp:Date.now(),summary}:marketAnalysis(category)
   res.set('Cache-Control','public, max-age=300')
   res.json({category,generatedAt:new Date(entry.stamp).toISOString(),totalModels:entry.summary.totalModels,totalListings:entry.summary.totalListings,models:entry.summary.models.slice(0,limit)})
  }catch(error){res.status(500).json({error:'MARKET_STATS_FAILED',message:error.message})}
@@ -1116,7 +1227,10 @@ app.get('/api/listings', rateLimit({ max: 90 }), async (req, res) => {
     const result = await divar.listings(filters, { foreground: true })
     if (!result.cached) await persistCrawl(result, { verifyMissing: !result.partial })
     const { observedTokens: _observedTokens, fullSnapshot: _fullSnapshot, ...publicResult } = result
-    const budgetFiltered = applyBudget(result.items, String(req.query.budget || ''))
+    // Lean mode scores what just came off the wire against the persisted averages,
+    // instead of against the handful of ads that happened to be in this response.
+    const liveItems = leanStorage ? scoreAgainstBaseline(result.items || [], filters.category).items : result.items
+    const budgetFiltered = applyBudget(liveItems, String(req.query.budget || ''))
     const filtered = canViewRisk&&String(req.query.suspiciousOnly)==='true' ? budgetFiltered.filter(item=>item.suspicious) : budgetFiltered
     const live=applyVisibility(filtered,req.query)
     res.set('Cache-Control', 'private, max-age=60')
@@ -1156,11 +1270,31 @@ const warmReference=()=>refreshReferencePrices()
 // sweeping Divar while the port was not even open yet — the visitor who arrived in
 // that window simply waited. The server now listens first and warms afterwards.
 let backgroundWorkStarted=false
+/** True while the persisted averages are younger than the refresh interval. */
+function baselineIsFresh(){
+ if(!baselineRefreshMs)return false
+ const stamps=BASELINE_CATEGORIES.map(category=>Date.parse(store.baselineMeta(category)?.generated_at||'')).filter(Number.isFinite)
+ if(!stamps.length)return false
+ return Date.now()-Math.max(...stamps)<baselineRefreshMs
+}
+
 function startBackgroundWork(){
  if(backgroundWorkStarted)return
  backgroundWorkStarted=true
- try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}
+ // Lean mode has no stored ads to rebuild from at boot; its averages come from
+ // the sweep below and are already on disk from the previous run.
+ if(!leanStorage){try{rebuildMarketBaseline()}catch(error){console.warn(`[baseline:boot] ${error.message}`)}}
  if(process.env.REFERENCE_ENABLED!=='false'){warmReference();setInterval(warmReference,referenceIntervalMs).unref()}
+ if(leanStorage){
+  // The sweep exists only to refresh the averages, so it runs on the baseline
+  // cycle (7 days by default) instead of every few minutes. Search is served
+  // live, so nothing is waiting on it. A restart must not re-crawl the country.
+  const interval=Math.max(baselineRefreshMs||0,3_600_000)
+  if(baselineIsFresh())console.log(`[lean] baseline still fresh; next sweep in ≤${Math.round(interval/86400000)}d`)
+  else warmMarketCache()
+  setInterval(()=>{if(!baselineIsFresh())warmMarketCache()},Math.min(interval,86_400_000)).unref()
+  return
+ }
  warmMarketCache()
  setInterval(warmMarketCache, marketRefreshIntervalMs).unref()
 }

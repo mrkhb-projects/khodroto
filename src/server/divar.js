@@ -639,6 +639,23 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
   let writing = Promise.resolve()
   let lastSuccessAt = null
   let lastError = null
+  // Every distinct filter combination a visitor submits becomes its own cache key,
+  // and a stale entry is deliberately kept so the site can still answer when Divar
+  // is unreachable. Without a ceiling the Map - and therefore the persisted JSON
+  // file - grows forever and eventually fills the hosting quota, which silently
+  // breaks the next FTP deploy. Keep the newest entries only.
+  const positive = (value, fallback) => { const parsed = Number(value); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback }
+  const cacheMaxEntries = Math.floor(positive(env.DIVAR_CACHE_MAX_ENTRIES, 150))
+  const cacheMaxAgeMs = positive(env.DIVAR_CACHE_MAX_AGE_HOURS, 72) * 3600000
+
+  function pruneCache() {
+    const oldest = Date.now() - cacheMaxAgeMs
+    for (const [key, entry] of cache) if (!entry || !(entry.time > oldest)) cache.delete(key)
+    if (cache.size <= cacheMaxEntries) return
+    // Map preserves insertion order, not recency, so sort on the stored timestamp.
+    const ranked = [...cache.entries()].sort((a, b) => (b[1]?.time || 0) - (a[1]?.time || 0))
+    for (const [key] of ranked.slice(cacheMaxEntries)) cache.delete(key)
+  }
 
   async function hydrateCache() {
     if (hydrated) return
@@ -647,12 +664,17 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     try {
       const stored = JSON.parse(await fs.readFile(cacheFile, 'utf8'))
       for (const [key, value] of stored.entries || []) if (value?.value?.items) cache.set(key, value)
+      // An oversized file written by an older build is trimmed on first read.
+      pruneCache()
     } catch (error) {
       if (error.code !== 'ENOENT') console.warn(`[divar:cache] Could not read cache: ${error.message}`)
     }
   }
 
   function persistCache() {
+    // Prune before the persistence guard: the ceiling protects process memory
+    // even when nothing is written to disk.
+    pruneCache()
     if (!cacheFile) return
     writing = writing.then(async () => {
       await fs.mkdir(path.dirname(cacheFile), { recursive: true })
@@ -732,6 +754,6 @@ export function createDivarService({ env = process.env, fetchImpl = fetch, cache
     listings,
     refresh,
     verifyListing,
-    status: () => ({ configured: provider !== 'none', connected: Boolean(lastSuccessAt), provider, official: provider === 'kenar', viaRelay: provider==='web'&&String(env.DIVAR_API_BASE_URL||WEB_BASE_URL).replace(/\/$/,'')!==WEB_BASE_URL, cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, refreshing: inflight.size > 0, lastSuccessAt, lastError }),
+    status: () => ({ configured: provider !== 'none', connected: Boolean(lastSuccessAt), provider, official: provider === 'kenar', viaRelay: provider==='web'&&String(env.DIVAR_API_BASE_URL||WEB_BASE_URL).replace(/\/$/,'')!==WEB_BASE_URL, cacheTtlMinutes: cacheTtlMs / 60000, cachedSearches: cache.size, cacheLimit: cacheMaxEntries, refreshing: inflight.size > 0, lastSuccessAt, lastError }),
   }
 }

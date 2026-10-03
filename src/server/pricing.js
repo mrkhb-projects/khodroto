@@ -194,6 +194,7 @@ function acceptCohort(level, values) {
  * level qualifies — the caller must then show "داده کافی نیست", never a guess.
  */
 export function valuate(item, built, { categoryHint = 'light' } = {}) {
+  if (built?.fromBaseline) return valuateFromBaseline(item, built, { categoryHint })
   const index = built?.index || built
   if (!index) return null
   const identity = item.identity || identifyVehicle(item.title, categoryHint)
@@ -225,6 +226,62 @@ export function valuate(item, built, { categoryHint = 'light' } = {}) {
   // which in practice means a model whose value barely depends on build year.
   const accepted = acceptCohort('model', entry.prices)
   return accepted ? { ...accepted, identity } : null
+}
+
+/**
+ * Valuation index rebuilt from PERSISTED baseline rows instead of raw listings.
+ *
+ * Lean storage mode keeps only these aggregates (~286 bytes per cohort) and throws
+ * the raw ads away, so a listing has to be scored against summary statistics. The
+ * cohort cascade below is deliberately the same as valuate()'s — most specific
+ * first — so a listing gets the same verdict whichever mode the server runs in.
+ */
+export function baselineIndex(rows = [], { generatedAt = null, windowDays = DEFAULT_WINDOW_DAYS } = {}) {
+  const cohorts = new Map()
+  for (const row of rows) {
+    const key = row.cohort_key ?? row.cohortKey
+    if (!key) continue
+    cohorts.set(`${key}|${Number(row.year) || 0}|${String(row.color || '')}`, {
+      samples: Number(row.samples) || 0,
+      trimmed: 0,
+      suspectCohort: false,
+      avg: Number(row.avg) || 0,
+      median: Number(row.median) || 0,
+      p25: Number(row.p25) || 0,
+      p75: Number(row.p75) || 0,
+      min: Number(row.min) || 0,
+      max: Number(row.max) || 0,
+      mad: Number(row.mad) || 0,
+      dispersion: Number(row.dispersion) || 0,
+    })
+  }
+  return { fromBaseline: true, cohorts, generatedAt, windowDays, index: new Map(), stats: { cohorts: cohorts.size } }
+}
+
+function acceptBaselineCohort(level, stats) {
+  if (!stats || stats.samples < MIN_SAMPLES[level]) return null
+  if (stats.dispersion > MAX_DISPERSION[level]) return null
+  return { level, label: LEVEL_LABELS[level], ...stats }
+}
+
+function valuateFromBaseline(item, built, { categoryHint = 'light' } = {}) {
+  const identity = item.identity || identifyVehicle(item.title, categoryHint)
+  if (!identity.confident) return null
+  const year = normalizeYear(item.year) || 0
+  const color = baseColor(item.color)
+  const cohort = (cohortYear, cohortColor) => built.cohorts.get(`${identity.key}|${cohortYear}|${cohortColor}`)
+
+  if (year && color) { const hit = acceptBaselineCohort('color', cohort(year, color)); if (hit) return { ...hit, identity } }
+  if (year) { const hit = acceptBaselineCohort('year', cohort(year, '')); if (hit) return { ...hit, identity } }
+  if (year) {
+    // Adjacent build years. Summary statistics cannot be merged without inventing
+    // a distribution, so take the best-supported neighbour instead of averaging.
+    const neighbours = [cohort(year - 1, ''), cohort(year + 1, '')].filter(Boolean).sort((a, b) => b.samples - a.samples)
+    const hit = acceptBaselineCohort('yearBand', neighbours[0])
+    if (hit) return { ...hit, identity }
+  }
+  const hit = acceptBaselineCohort('model', cohort(0, ''))
+  return hit ? { ...hit, identity } : null
 }
 
 /** Flat, serialisable view of the index — this is what gets persisted as the baseline. */
