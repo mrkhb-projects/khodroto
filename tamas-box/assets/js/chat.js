@@ -769,7 +769,7 @@
 			state.session = payload.session;
 		}
 
-		if ( payload.config ) {
+		if ( payload.config && typeof payload.config.online !== 'undefined' ) {
 			C.online = flag( payload.config.online );
 		}
 
