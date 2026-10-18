@@ -7,7 +7,7 @@ Tags: contact, call button, live chat, bale, floating button, تماس, چت آ�
 Requires at least: 5.4
 Tested up to: 6.6
 Requires PHP: 7.0
-Stable tag: 3.2.2
+Stable tag: 3.2.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -167,6 +167,14 @@ License URI: https://www.gnu.org/licenses/gpl-2.0.html
 رویدادها: `tmbc:open`، `tmbc:close`، `tmbc:message`، `tmbc:unread`
 
 == Changelog ==
+
+= 3.2.3 =
+* رفع علت اصلی «کار نکردن دکمه چت آنلاین»: اسکریپت چت وقتی `window.TMB_CHAT` در صفحه نبود (کش صفحه، بهینه‌ساز/تأخیر‌دهنده جاوااسکریپت، یا قالبی که اسکریپت‌های inline را جابه‌جا می‌کند) بی‌صدا خارج می‌شد و کلیک روی دکمه فقط آدرس را به `#tmb-chat` تغییر می‌داد. حالا تنظیمات از چهار منبع خوانده می‌شود: اسکریپت inline، صفت `data-tmbc-config` روی خود ویجت، صفت `data-tmbc-rest`، و در نهایت مسیر استاندارد `/wp-json/tmb/v1/chat`
+* اگر باز هم تنظیمات پیدا نشود، دکمه بی‌عمل نمی‌ماند: کلیک لغو می‌شود، علت در کنسول نوشته می‌شود و یک راهنمای کوچک روی صفحه نمایش داده می‌شود
+* دکمه «پاک کردن کش سایت» در تب چت (WP Rocket، LiteSpeed، W3TC، Autoptimize، WP Super Cache، SiteGround، Breeze و کش آبجکت وردپرس)
+* گزارش عیب‌یابی حالا صفحه نخست سایت را مانند یک بازدیدکننده واقعی درخواست می‌کند و می‌گوید در HTML چه چیزی هست و چه چیزی نیست: آیتم چت، `#tmbc-root`، `chat.js`، `TMB_CHAT`، تگ واقعی اسکریپت، افزونه‌های کش شناسایی‌شده و هدرهای کش
+* تست خودکار مرورگری (jsdom) در ۴ سناریو: ۳۲/۳۲ موفق
+
 
 = 3.2.2 =
 * گزارش عیب‌یابی با یک آدرس اینترنتی: `?tmb_chat_report=1` (فقط برای مدیر) — باز کنید، انتخاب همه، کپی

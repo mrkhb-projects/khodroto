@@ -390,10 +390,24 @@ class TMB_Chat {
 		$dir  = 'auto' === $s['direction'] ? ( is_rtl() ? 'rtl' : 'ltr' ) : $s['direction'];
 		$show_launcher = in_array( $c['launcher'], array( 'button', 'both' ), true );
 
+		/*
+		 * The widget config travels twice: as an inline script (wp_localize_script)
+		 * and as an attribute on the root element. Page caches and js optimisers
+		 * happily move, defer or drop inline scripts - the attribute survives and
+		 * chat.js falls back to it, so the button never dies silently.
+		 */
+		$config    = $this->frontend_config();
+		$rest_url  = isset( $config['rest'] ) ? $config['rest'] : '';
+		$nonce     = isset( $config['nonce'] ) ? $config['nonce'] : '';
+		$cfg_json  = (string) wp_json_encode( $config );
+
 		ob_start();
 		?>
 		<div class="tmbc-root tmbc-pos-<?php echo esc_attr( $c['launcher_position'] ); ?>" id="tmbc-root" dir="<?php echo esc_attr( $dir ); ?>"
-			data-tmbc="<?php echo esc_attr( $show_launcher ? 'launcher' : 'panel' ); ?>">
+			data-tmbc="<?php echo esc_attr( $show_launcher ? 'launcher' : 'panel' ); ?>"
+			data-tmbc-rest="<?php echo esc_attr( esc_url_raw( $rest_url ) ); ?>"
+			data-tmbc-nonce="<?php echo esc_attr( $nonce ); ?>"
+			data-tmbc-config="<?php echo esc_attr( $cfg_json ); ?>">
 
 			<div class="tmbc-overlay" data-tmbc-overlay hidden></div>
 

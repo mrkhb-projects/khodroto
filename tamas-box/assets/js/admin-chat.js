@@ -267,6 +267,10 @@
 					action = 'tmb_chat_item_first';
 					label  = 'در حال انتقال دکمه چت به اول فهرست…';
 					break;
+				case 'purge-cache':
+					action = 'tmb_chat_purge_cache';
+					label  = 'در حال پاک کردن کش سایت…';
+					break;
 				case 'diag':
 					action = 'tmb_chat_diag';
 					label  = 'در حال تهیه گزارش عیب‌یابی… (چند ثانیه)';

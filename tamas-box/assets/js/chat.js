@@ -9,14 +9,156 @@
  *   TamasBoxChat.open() / close() / toggle() / isOpen() / send(text) / unread()
  * Events on document: tmbc:open, tmbc:close, tmbc:message, tmbc:unread
  */
-( function () {
-	'use strict';
+/*
+ * Find the widget configuration, in the order we prefer:
+ *
+ *   1. window.TMB_CHAT   - what wp_localize_script prints (the normal case)
+ *   2. data-tmbc-config  - the very same json, printed on the widget element
+ *                          itself. Survives js optimisers and page caches that
+ *                          move, defer or drop inline scripts.
+ *   3. data-tmbc-rest    - just the endpoint
+ *   4. <origin>/wp-json/tmb/v1/chat - the standard WordPress REST path
+ *
+ * Without one of these the widget used to quit silently, which left a chat
+ * button that only changed the url to #tmb-chat. That must never happen again.
+ */
+function tmbChatPickConfig() {
+	var cfg = window.TMB_CHAT;
 
-	var RAW = window.TMB_CHAT || {};
+	if ( cfg && cfg.rest ) {
+		return cfg;
+	}
 
-	if ( ! RAW.rest || ! window.Promise ) {
+	var root = document.getElementById( 'tmbc-root' );
+
+	if ( root ) {
+		var json = root.getAttribute( 'data-tmbc-config' );
+
+		if ( json ) {
+			try {
+				var parsed = JSON.parse( json );
+
+				if ( parsed && parsed.rest ) {
+					return parsed;
+				}
+			} catch ( err ) { /* fall through */ }
+		}
+
+		var rest = root.getAttribute( 'data-tmbc-rest' );
+
+		if ( rest ) {
+			return {
+				rest:     rest,
+				nonce:    root.getAttribute( 'data-tmbc-nonce' ) || '',
+				page:     window.location.href,
+				home:     window.location.origin + '/',
+				enabled:  '1',
+				online:   '1',
+				launcher: 'item',
+				poll:     '5',
+				pollClosed: '60',
+				maxLength: '1000',
+				title:    'چت آنلاین'
+			};
+		}
+	}
+
+	if ( window.location && window.location.origin ) {
+		return {
+			rest:     window.location.origin + '/wp-json/tmb/v1/chat',
+			enabled:  '1',
+			online:   '1',
+			launcher: 'item',
+			poll:     '5',
+			pollClosed: '60',
+			maxLength: '1000',
+			title:    'چت آنلاین'
+		};
+	}
+
+	return null;
+}
+
+/**
+ * Never leave a chat button that does nothing.
+ *
+ * While (or if) the widget cannot start, clicks on the chat items are still
+ * caught so the browser does not jump to #tmb-chat, and the reason is written
+ * to the console.
+ *
+ * @param {string}  reason    Why we are in this state.
+ * @param {boolean} temporary Still retrying - stay quiet for the visitor.
+ */
+function tmbChatGuard( reason, temporary ) {
+	if ( document.body && ! document.body.hasAttribute( 'data-tmbc-state' ) ) {
+		document.body.setAttribute( 'data-tmbc-state', 'blocked-' + reason );
+	}
+
+	document.addEventListener( 'click', function ( e ) {
+		var node = e.target;
+
+		while ( node && node !== document ) {
+			if ( node.getAttribute ) {
+				var action = node.getAttribute( 'data-tmb-action' );
+				var href   = node.getAttribute( 'href' );
+
+				if ( 'chat' === action || '#tmb-chat' === href || node.hasAttribute( 'data-tmbc-open' ) ) {
+					/* the real widget took over - let it do its job */
+					if ( window.TamasBoxChat ) {
+						return;
+					}
+
+					e.preventDefault();
+					e.stopPropagation();
+
+					if ( window.console && window.console.error ) {
+						window.console.error( '[Tamas Box Chat] پیکربندی چت پیدا نشد (' + reason + ') - اسکریپت chat.js اجرا شد ولی window.TMB_CHAT و data-tmbc-config در دسترس نبودند.' );
+					}
+
+					if ( ! temporary ) {
+						tmbChatNotice();
+					}
+					return;
+				}
+			}
+
+			node = node.parentNode;
+		}
+	}, true );
+}
+
+/**
+ * Small visible hint so the visitor is not left guessing.
+ */
+function tmbChatNotice() {
+	if ( document.getElementById( 'tmbc-fallback' ) ) {
 		return;
 	}
+
+	var box = document.createElement( 'div' );
+
+	box.id = 'tmbc-fallback';
+	box.setAttribute( 'dir', 'rtl' );
+	box.style.cssText = 'position:fixed;right:16px;bottom:16px;max-width:320px;z-index:2147483000;' +
+		'background:#111827;color:#fff;padding:14px 16px;border-radius:12px;font:14px/1.9 Tahoma,sans-serif;' +
+		'box-shadow:0 10px 30px rgba(0,0,0,.3)';
+	box.innerHTML = '<strong>چت آنلاین بارگذاری نشد</strong><br>' +
+		'احتمالاً یک افزونه کش یا بهینه‌ساز جاوااسکریپت، تنظیمات چت را از صفحه حذف کرده است.' +
+		'<br>لطفاً صفحه را با Ctrl+Shift+R تازه کنید.';
+
+	box.addEventListener( 'click', function () {
+		if ( box.parentNode ) {
+			box.parentNode.removeChild( box );
+		}
+	} );
+
+	if ( document.body ) {
+		document.body.appendChild( box );
+	}
+}
+
+function tmbChatBoot( RAW ) {
+	'use strict';
 
 	/* ------------------------------------------------------------------
 	 * helpers
@@ -1391,4 +1533,49 @@
 		},
 		version: txt( RAW.version, '' )
 	};
+}
+
+/* ------------------------------------------------------------------
+ * entry point
+ * ---------------------------------------------------------------- */
+
+( function () {
+	if ( ! window.Promise ) {
+		tmbChatGuard( 'no-promise' );
+		return;
+	}
+
+	var cfg = tmbChatPickConfig();
+
+	if ( cfg && cfg.rest ) {
+		window.TMB_CHAT = cfg;
+		tmbChatBoot( cfg );
+		return;
+	}
+
+	/*
+	 * The inline configuration is not there yet: a js optimiser may print it
+	 * after this file, or a page cache may have stored a half built page.
+	 * Keep looking for a few seconds instead of leaving a dead button.
+	 */
+	var tries = 0;
+	var timer = window.setInterval( function () {
+		tries++;
+		cfg = tmbChatPickConfig();
+
+		if ( cfg && cfg.rest ) {
+			window.clearInterval( timer );
+			window.TMB_CHAT = cfg;
+			tmbChatBoot( cfg );
+
+			if ( document.body ) {
+				document.body.removeAttribute( 'data-tmbc-state' );
+			}
+		} else if ( tries >= 30 ) {
+			window.clearInterval( timer );
+			tmbChatGuard( 'no-config' );
+		}
+	}, 100 );
+
+	tmbChatGuard( 'waiting', true );
 } )();

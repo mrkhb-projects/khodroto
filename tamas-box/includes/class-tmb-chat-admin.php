@@ -48,6 +48,7 @@ class TMB_Chat_Admin {
 		add_action( 'wp_ajax_tmb_chat_admin_link', array( $this, 'ajax_admin_link' ) );
 		add_action( 'wp_ajax_tmb_chat_item_first', array( $this, 'ajax_item_first' ) );
 		add_action( 'wp_ajax_tmb_chat_diag', array( $this, 'ajax_diag' ) );
+		add_action( 'wp_ajax_tmb_chat_purge_cache', array( $this, 'ajax_purge_cache' ) );
 
 		add_action( 'admin_init', array( $this, 'maybe_clear_notice' ) );
 		add_action( 'admin_notices', array( $this, 'upgrade_notice' ) );
@@ -298,6 +299,7 @@ class TMB_Chat_Admin {
 					<button type="button" class="button button-primary" data-tmb-chat="admin-link">🔗 <?php esc_html_e( 'لینک ثبت مدیر', 'tamas-box' ); ?></button>
 					<button type="button" class="button" data-tmb-chat="item-first">⬆️ <?php esc_html_e( 'انتقال دکمه چت به اول فهرست', 'tamas-box' ); ?></button>
 					<button type="button" class="button" data-tmb-chat="diag">🩺 <?php esc_html_e( 'گزارش عیب‌یابی', 'tamas-box' ); ?></button>
+					<button type="button" class="button" data-tmb-chat="purge-cache">🧹 <?php esc_html_e( 'پاک کردن کش سایت', 'tamas-box' ); ?></button>
 				</div>
 
 				<p class="tmb-note">
@@ -1270,6 +1272,61 @@ class TMB_Chat_Admin {
 	}
 
 	/**
+	 * Empty every page cache we know about.
+	 *
+	 * A cached page from before the chat module existed has the chat button but
+	 * no chat window and no chat.js in it - which looks exactly like a dead
+	 * button. Purging is the first thing to try.
+	 *
+	 * @return void
+	 */
+	public function ajax_purge_cache() {
+		$this->guard();
+
+		$done = array();
+
+		if ( function_exists( 'rocket_clean_domain' ) ) {
+			rocket_clean_domain();
+			$done[] = 'WP Rocket';
+		}
+		if ( function_exists( 'w3tc_flush_all' ) ) {
+			w3tc_flush_all();
+			$done[] = 'W3 Total Cache';
+		}
+		if ( function_exists( 'wp_cache_clear_cache' ) ) {
+			wp_cache_clear_cache();
+			$done[] = 'WP Super Cache';
+		}
+		if ( class_exists( 'autoptimize_cache' ) && method_exists( 'autoptimize_cache', 'clearall_cache' ) ) {
+			autoptimize_cache::clearall_cache();
+			$done[] = 'Autoptimize';
+		}
+		if ( function_exists( 'sg_cachepress_purge_cache' ) ) {
+			sg_cachepress_purge_cache();
+			$done[] = 'SiteGround Optimizer';
+		}
+
+		// LiteSpeed / Breeze / host level listeners.
+		do_action( 'litespeed_purge_all' );
+		do_action( 'breeze_clear_all_cache' );
+		do_action( 'tmb_purge_all_caches' );
+
+		if ( function_exists( 'wp_cache_flush' ) ) {
+			wp_cache_flush();
+			$done[] = __( 'کش آبجکت وردپرس', 'tamas-box' );
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => $done
+					? sprintf( __( 'کش پاک شد: %s', 'tamas-box' ), implode( ' , ', $done ) )
+					: __( 'افزونه کش شناخته‌شده‌ای پیدا نشد؛ اگر کش در سطح هاست یا Cloudflare است، از همان‌جا پاک کنید.', 'tamas-box' ),
+				'hint'    => __( 'حالا سایت را با Ctrl+Shift+R باز کنید و دوباره دکمه چت را بزنید. اگر هنوز کار نکرد، «گزارش عیب‌یابی» را بگیرید - بخش «بررسی صفحه سایت» دقیقاً می‌گوید در HTML چه چیزی کم است.', 'tamas-box' ),
+			)
+		);
+	}
+
+	/**
 	 * Deep link that registers whoever opens it as an admin chat.
 	 *
 	 * Bale cannot message a phone number - a bot only knows chat ids - so this
@@ -1444,6 +1501,76 @@ class TMB_Chat_Admin {
 		$routes = rest_get_server()->get_routes();
 		$L[]    = 'مسیر REST /tmb/v1/chat/session: ' . $yn( isset( $routes['/tmb/v1/chat/session'] ) );
 		$L[]    = 'rest_url(): ' . rest_url( 'tmb/v1/chat/session' );
+		$L[]    = '';
+		$L[]    = '[بررسی صفحه سایت - همان چیزی که بازدیدکننده می‌گیرد]';
+		$probe_url = add_query_arg( 'tmb_probe', '1', home_url( '/' ) );
+		$probe     = wp_remote_get(
+			$probe_url,
+			array(
+				'timeout'     => 25,
+				'sslverify'   => false,
+				'redirection' => 3,
+				'headers'     => array(
+					'Cache-Control' => 'no-cache',
+					'Pragma'        => 'no-cache',
+				),
+			)
+		);
+
+		if ( is_wp_error( $probe ) ) {
+			$L[] = '  ✖ درخواست داخلی به سایت شکست خورد: ' . $probe->get_error_message();
+			$L[] = '  (بعضی هاست‌ها درخواست loopback را می‌بندند؛ در این صورت این بخش قابل بررسی نیست)';
+		} else {
+			$html = (string) wp_remote_retrieve_body( $probe );
+			$L[]  = '  آدرس: ' . $probe_url . ' | HTTP ' . (int) wp_remote_retrieve_response_code( $probe ) . ' | ' . number_format( strlen( $html ) ) . ' بایت';
+			$L[]  = '  آیتم چت در HTML: ' . $yn( false !== strpos( $html, 'data-tmb-action="chat"' ) );
+			$L[]  = '  پنجره چت (#tmbc-root) در HTML: ' . $yn( false !== strpos( $html, 'id="tmbc-root"' ) );
+			$L[]  = '  تنظیمات چت روی خود ویجت (data-tmbc-config): ' . $yn( false !== strpos( $html, 'data-tmbc-config' ) );
+			$L[]  = '  اسکریپت chat.js در HTML: ' . $yn( false !== strpos( $html, 'chat.js' ) );
+			$L[]  = '  اسکریپت frontend.js در HTML: ' . $yn( false !== strpos( $html, 'frontend.js' ) );
+			$L[]  = '  پیکربندی TMB_CHAT در HTML: ' . $yn( false !== strpos( $html, 'TMB_CHAT' ) );
+
+			if ( preg_match( '#<script[^>]*chat\.js[^>]*>#i', $html, $m ) ) {
+				$L[] = '  تگ اسکریپت چت: ' . trim( preg_replace( '/\s+/', ' ', $m[0] ) );
+			} else {
+				$L[] = '  تگ اسکریپت چت: پیدا نشد ✖ ← در HTMLی که بازدیدکننده می‌گیرد، اسکریپت چت وجود ندارد (کش قدیمی یا بهینه‌ساز جاوااسکریپت)';
+			}
+
+			$cache = array();
+			if ( defined( 'LSCWP_V' ) ) {
+				$cache[] = 'LiteSpeed Cache ' . LSCWP_V;
+			}
+			if ( defined( 'WP_ROCKET_VERSION' ) ) {
+				$cache[] = 'WP Rocket ' . WP_ROCKET_VERSION;
+			}
+			if ( defined( 'W3TC' ) ) {
+				$cache[] = 'W3 Total Cache';
+			}
+			if ( defined( 'AUTOPTIMIZE_PLUGIN_VERSION' ) ) {
+				$cache[] = 'Autoptimize ' . AUTOPTIMIZE_PLUGIN_VERSION;
+			}
+			if ( defined( 'WPCACHEHOME' ) ) {
+				$cache[] = 'WP Super Cache';
+			}
+			if ( defined( 'SG_OPTIMIZER_VERSION' ) ) {
+				$cache[] = 'SiteGround Optimizer';
+			}
+			if ( class_exists( 'Breeze_Config' ) ) {
+				$cache[] = 'Breeze';
+			}
+			if ( defined( 'WP_CACHE' ) && WP_CACHE ) {
+				$cache[] = 'WP_CACHE=true';
+			}
+			$L[] = '  افزونه‌های کش/بهینه‌ساز شناسایی‌شده: ' . ( $cache ? implode( ' , ', $cache ) : 'هیچ' );
+
+			foreach ( array( 'x-litespeed-cache', 'x-lscache', 'cf-cache-status', 'x-cache', 'x-varnish', 'x-proxy-cache' ) as $hdr ) {
+				$value = wp_remote_retrieve_header( $probe, $hdr );
+				if ( ! empty( $value ) && ! is_array( $value ) ) {
+					$L[] = '  هدر ' . $hdr . ': ' . $value;
+				}
+			}
+		}
+
 		$L[]    = '';
 		$L[]    = '[تست زنده API بله]';
 
