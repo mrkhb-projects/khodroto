@@ -1616,11 +1616,15 @@ class TMB_Chat {
 		$c      = self::cfg();
 		$secret = (string) $request->get_param( 'secret' );
 
+		TMB_Chat_DB::set_state( 'webhook_hits', (int) TMB_Chat_DB::get_state( 'webhook_hits', 0 ) + 1 );
+
 		if ( empty( $c['bale_enabled'] ) || '' === (string) $c['bale_secret'] ) {
+			TMB_Chat_Bale::trace( 'webhook-rejected: bale off or no secret' );
 			return $this->error( 'tmb_webhook_off', __( 'وب‌هوک غیرفعال است.', 'tamas-box' ), 403 );
 		}
 
 		if ( ! hash_equals( (string) $c['bale_secret'], $secret ) ) {
+			TMB_Chat_Bale::trace( 'webhook-rejected: wrong secret in url' );
 			return $this->error( 'tmb_bad_secret', __( 'کلید نامعتبر است.', 'tamas-box' ), 403 );
 		}
 
@@ -1630,6 +1634,7 @@ class TMB_Chat {
 			: '';
 
 		if ( '' !== $header && ! hash_equals( (string) $c['bale_secret'], $header ) ) {
+			TMB_Chat_Bale::trace( 'webhook-rejected: wrong secret header' );
 			return $this->error( 'tmb_bad_secret', __( 'کلید نامعتبر است.', 'tamas-box' ), 403 );
 		}
 
@@ -1641,6 +1646,7 @@ class TMB_Chat {
 		}
 
 		if ( ! is_array( $update ) ) {
+			TMB_Chat_Bale::trace( 'webhook-rejected: unreadable body' );
 			return $this->error( 'tmb_bad_update', __( 'بدنه درخواست نامعتبر است.', 'tamas-box' ), 400 );
 		}
 
@@ -1648,8 +1654,12 @@ class TMB_Chat {
 
 		try {
 			TMB_Chat_Bale::handle_update( $update );
-		} catch ( Exception $e ) { // phpcs:ignore Generic.CodeAnalysis.EmptyStatement
+		} catch ( Exception $e ) {
 			TMB_Chat_DB::set_state( 'webhook_error', substr( $e->getMessage(), 0, 200 ) );
+			TMB_Chat_Bale::trace( 'webhook-exception', array( 'error' => substr( $e->getMessage(), 0, 160 ) ) );
+		} catch ( Throwable $e ) {
+			TMB_Chat_DB::set_state( 'webhook_error', substr( $e->getMessage(), 0, 200 ) );
+			TMB_Chat_Bale::trace( 'webhook-fatal', array( 'error' => substr( $e->getMessage(), 0, 160 ) ) );
 		}
 
 		TMB_Chat_DB::set_state( 'last_webhook', time() );

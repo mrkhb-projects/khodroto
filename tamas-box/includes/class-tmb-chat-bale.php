@@ -874,21 +874,36 @@ class TMB_Chat_Bale {
 	 */
 	public static function handle_update( $update ) {
 		if ( empty( $update ) || ! is_array( $update ) ) {
+			self::trace( 'empty-update' );
 			return;
 		}
 
-		/* de-duplicate (webhook + polling can overlap) */
+		/*
+		 * De-duplicate. update_id alone is NOT enough: the webhook and
+		 * getUpdates do not have to share one numbering, and an offset stored
+		 * while polling then silently swallows every webhook update - which
+		 * looks exactly like "the bot never answers". So the messages
+		 * themselves are remembered.
+		 */
 		$update_id = isset( $update['update_id'] ) ? (int) $update['update_id'] : 0;
-		if ( $update_id ) {
-			$seen = (int) TMB_Chat_DB::get_state( 'last_update_id', 0 );
-			if ( $update_id <= $seen ) {
+
+		if ( $update_id && $update_id > (int) TMB_Chat_DB::get_state( 'last_update_id', 0 ) ) {
+			TMB_Chat_DB::set_state( 'last_update_id', $update_id );
+		}
+
+		$key = self::dedupe_key( $update, $update_id );
+
+		if ( '' !== $key ) {
+			if ( self::already_seen( $key ) ) {
+				self::trace( 'duplicate', array( 'key' => $key, 'update_id' => $update_id ) );
 				return;
 			}
-			TMB_Chat_DB::set_state( 'last_update_id', $update_id );
+			self::mark_seen( $key );
 		}
 
 		if ( ! empty( $update['callback_query'] ) ) {
 			self::handle_callback( $update['callback_query'] );
+			self::trace( 'callback', array( 'update_id' => $update_id ) );
 			return;
 		}
 
@@ -900,11 +915,13 @@ class TMB_Chat_Bale {
 		}
 
 		if ( ! is_array( $message ) ) {
+			self::trace( 'no-message', array( 'update_id' => $update_id, 'keys' => implode( ',', array_keys( $update ) ) ) );
 			return;
 		}
 
 		$chat_id = isset( $message['chat']['id'] ) ? (int) $message['chat']['id'] : 0;
 		if ( ! $chat_id ) {
+			self::trace( 'no-chat-id', array( 'update_id' => $update_id ) );
 			return;
 		}
 
@@ -924,25 +941,30 @@ class TMB_Chat_Bale {
 
 			if ( in_array( $cmd, array( 'start', 'id', 'help' ), true ) ) {
 				self::handle_start_command( $chat_id, $text, $cmd, $is_admin );
+				self::trace( 'command', array( 'cmd' => $cmd, 'chat_id' => $chat_id ) );
 				return;
 			}
 
 			if ( ! $is_admin && ! empty( $c['only_admins_reply'] ) ) {
 				self::reject_stranger( $chat_id );
+				self::trace( 'rejected-stranger', array( 'chat_id' => $chat_id, 'cmd' => $cmd ) );
 				return;
 			}
 
 			if ( empty( $c['bale_commands'] ) ) {
+				self::trace( 'commands-off', array( 'chat_id' => $chat_id ) );
 				return;
 			}
 
 			self::handle_command( $chat_id, $text, $agent_name, $message );
+			self::trace( 'command', array( 'cmd' => $cmd, 'chat_id' => $chat_id ) );
 			return;
 		}
 
 		/* nobody except the configured admins may drive the bot */
 		if ( ! empty( $c['only_admins_reply'] ) && ! $is_admin ) {
 			self::reject_stranger( $chat_id );
+			self::trace( 'rejected-stranger', array( 'chat_id' => $chat_id ) );
 			return;
 		}
 
@@ -969,6 +991,7 @@ class TMB_Chat_Bale {
 		}
 
 		if ( '' === $text && empty( $attachment ) ) {
+			self::trace( 'empty-text', array( 'chat_id' => $chat_id ) );
 			return;
 		}
 
@@ -979,10 +1002,11 @@ class TMB_Chat_Bale {
 					. "\n<code>/reply 12 " . esc_html__( 'متن پاسخ', 'tamas-box' ) . '</code>'
 					. "\n" . esc_html__( 'فهرست گفتگوهای باز:', 'tamas-box' ) . " <code>/chats</code>"
 			);
+			self::trace( 'no-session', array( 'chat_id' => $chat_id, 'is_admin' => $is_admin ? 1 : 0 ) );
 			return;
 		}
 
-		TMB_Chat::store_agent_message(
+		$message_id = TMB_Chat::store_agent_message(
 			(int) $session['id'],
 			$text,
 			$attachment,
@@ -993,6 +1017,111 @@ class TMB_Chat_Bale {
 				'message_id' => isset( $message['message_id'] ) ? (int) $message['message_id'] : 0,
 			)
 		);
+
+		self::trace(
+			$message_id ? 'stored' : 'store-failed',
+			array(
+				'chat_id'    => $chat_id,
+				'session_id' => (int) $session['id'],
+				'message_id' => (int) $message_id,
+				'preview'    => self::short_preview( $text ),
+			)
+		);
+	}
+
+	/**
+	 * Identity of an update, used instead of the fragile update_id dedupe.
+	 *
+	 * @param array $update    Update.
+	 * @param int   $update_id Update id.
+	 * @return string
+	 */
+	protected static function dedupe_key( $update, $update_id = 0 ) {
+		if ( ! empty( $update['callback_query']['id'] ) ) {
+			return 'cb:' . $update['callback_query']['id'];
+		}
+
+		$message = null;
+		if ( ! empty( $update['message'] ) && is_array( $update['message'] ) ) {
+			$message = $update['message'];
+		} elseif ( ! empty( $update['edited_message'] ) && is_array( $update['edited_message'] ) ) {
+			$message = $update['edited_message'];
+		}
+
+		if ( is_array( $message ) && ! empty( $message['message_id'] ) ) {
+			$chat = isset( $message['chat']['id'] ) ? (string) $message['chat']['id'] : '0';
+			return 'm:' . $chat . ':' . (int) $message['message_id'];
+		}
+
+		return $update_id ? 'u:' . $update_id : '';
+	}
+
+	/**
+	 * Was this update handled already?
+	 *
+	 * @param string $key Dedupe key.
+	 * @return bool
+	 */
+	protected static function already_seen( $key ) {
+		$seen = (array) TMB_Chat_DB::get_state( 'seen_keys', array() );
+
+		return in_array( (string) $key, $seen, true );
+	}
+
+	/**
+	 * Remember an update (rolling list, cheap and survives a webhook/poll mix).
+	 *
+	 * @param string $key Dedupe key.
+	 * @return void
+	 */
+	protected static function mark_seen( $key ) {
+		$seen = (array) TMB_Chat_DB::get_state( 'seen_keys', array() );
+
+		if ( in_array( (string) $key, $seen, true ) ) {
+			return;
+		}
+
+		$seen[] = (string) $key;
+
+		if ( count( $seen ) > 300 ) {
+			$seen = array_slice( $seen, -300 );
+		}
+
+		TMB_Chat_DB::set_state( 'seen_keys', array_values( $seen ) );
+	}
+
+	/**
+	 * Short one line preview for the diagnostics log.
+	 *
+	 * @param string $text Text.
+	 * @return string
+	 */
+	protected static function short_preview( $text ) {
+		$text = trim( (string) $text );
+
+		if ( function_exists( 'mb_substr' ) ) {
+			$text = mb_substr( $text, 0, 40, 'UTF-8' );
+		} else {
+			$text = substr( $text, 0, 40 );
+		}
+
+		return str_replace( array( "\r", "\n" ), ' ', $text );
+	}
+
+	/**
+	 * Append one line to the inbound trace (newest first, max 8 entries).
+	 *
+	 * @param string $action What happened.
+	 * @param array  $extra  Details.
+	 * @return void
+	 */
+	public static function trace( $action, $extra = array() ) {
+		$entry = array_merge( array( 'time' => time(), 'action' => (string) $action ), (array) $extra );
+		$log   = (array) TMB_Chat_DB::get_state( 'inbound_log', array() );
+
+		array_unshift( $log, $entry );
+
+		TMB_Chat_DB::set_state( 'inbound_log', array_slice( $log, 0, 8 ) );
 	}
 
 	/**

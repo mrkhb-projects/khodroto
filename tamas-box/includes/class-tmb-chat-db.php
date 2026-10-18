@@ -721,6 +721,68 @@ class TMB_Chat_DB {
 	 * @param int $limit      Max rows.
 	 * @return array
 	 */
+	/**
+	 * Newest messages across every session (diagnostics).
+	 *
+	 * @param string $sender '' = all, 'agent', 'visitor', 'system'.
+	 * @param int    $limit  Max rows.
+	 * @return array
+	 */
+	public static function recent_messages( $sender = '', $limit = 3 ) {
+		global $wpdb;
+
+		if ( ! self::maybe_install() ) {
+			return array();
+		}
+
+		$table  = self::messages_table();
+		$limit  = max( 1, min( 20, (int) $limit ) );
+		$sender = (string) $sender;
+
+		if ( '' !== $sender ) {
+			$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+				$wpdb->prepare( "SELECT * FROM {$table} WHERE sender = %s ORDER BY id DESC LIMIT {$limit}", $sender ),
+				ARRAY_A
+			);
+		} else {
+			$rows = $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id DESC LIMIT {$limit}", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+		}
+
+		return $rows ? $rows : array();
+	}
+
+	/**
+	 * Message and session totals (diagnostics).
+	 *
+	 * @return array
+	 */
+	public static function totals() {
+		global $wpdb;
+
+		if ( ! self::maybe_install() ) {
+			return array( 'messages' => 0, 'agent' => 0, 'visitor' => 0, 'sessions' => 0, 'map' => 0 );
+		}
+
+		$messages = self::messages_table();
+		$sessions = self::sessions_table();
+
+		$by_sender = $wpdb->get_results( "SELECT sender, COUNT(*) AS n FROM {$messages} GROUP BY sender", ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+		$out       = array( 'messages' => 0, 'agent' => 0, 'visitor' => 0, 'sessions' => 0, 'map' => 0 );
+
+		foreach ( (array) $by_sender as $row ) {
+			$n               = isset( $row['n'] ) ? (int) $row['n'] : 0;
+			$out['messages'] += $n;
+
+			if ( isset( $row['sender'] ) && isset( $out[ $row['sender'] ] ) ) {
+				$out[ $row['sender'] ] = $n;
+			}
+		}
+
+		$out['sessions'] = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$sessions}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+
+		return $out;
+	}
+
 	public static function get_messages( $session_id, $after = 0, $limit = 100 ) {
 		global $wpdb;
 
