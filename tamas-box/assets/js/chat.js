@@ -1572,11 +1572,12 @@ function tmbChatBoot( RAW ) {
 		return;
 	}
 
-	var cfg = tmbChatPickConfig();
-
-	if ( cfg && cfg.rest ) {
-		window.TMB_CHAT = cfg;
-
+	/**
+	 * Boot, with every failure made visible.
+	 *
+	 * @param {object} cfg Widget configuration.
+	 */
+	function run( cfg ) {
 		try {
 			if ( false === tmbChatBoot( cfg ) ) {
 				window.TMB_CHAT_ERROR = window.TMB_CHAT_ERROR || 'widget markup (#tmbc-root) is missing from the page';
@@ -1596,6 +1597,68 @@ function tmbChatBoot( RAW ) {
 
 			tmbChatGuard( 'boot-error' );
 		}
+	}
+
+	/**
+	 * Wait for the widget markup, then boot.
+	 *
+	 * This is the race that made the chat button look dead: WordPress prints
+	 * footer scripts on wp_footer at priority 20, while the widget itself is
+	 * printed later in the same hook. So this file can run a few milliseconds
+	 * before #tmbc-root exists - getElementById returns null and the widget used
+	 * to give up right there.
+	 *
+	 * @param {object} cfg Widget configuration.
+	 */
+	function start( cfg ) {
+		window.TMB_CHAT = cfg;
+
+		if ( document.getElementById( 'tmbc-root' ) ) {
+			run( cfg );
+			return;
+		}
+
+		var tries = 0;
+
+		function found() {
+			return !! document.getElementById( 'tmbc-root' );
+		}
+
+		function poll() {
+			var timer = window.setInterval( function () {
+				tries++;
+
+				if ( found() ) {
+					window.clearInterval( timer );
+					run( cfg );
+					return;
+				}
+
+				if ( tries >= 50 ) {
+					window.clearInterval( timer );
+					window.TMB_CHAT_ERROR = 'widget markup (#tmbc-root) never appeared';
+					tmbChatGuard( 'no-markup' );
+				}
+			}, 100 );
+		}
+
+		if ( 'loading' === document.readyState ) {
+			document.addEventListener( 'DOMContentLoaded', function () {
+				if ( found() ) {
+					run( cfg );
+				} else {
+					poll();
+				}
+			} );
+		} else {
+			poll();
+		}
+	}
+
+	var cfg = tmbChatPickConfig();
+
+	if ( cfg && cfg.rest ) {
+		start( cfg );
 		return;
 	}
 
@@ -1611,28 +1674,11 @@ function tmbChatBoot( RAW ) {
 
 		if ( cfg && cfg.rest ) {
 			window.clearInterval( timer );
-			window.TMB_CHAT = cfg;
-
-			try {
-				if ( false === tmbChatBoot( cfg ) ) {
-					window.TMB_CHAT_ERROR = window.TMB_CHAT_ERROR || 'widget markup (#tmbc-root) is missing from the page';
-					tmbChatGuard( 'no-markup' );
-					return;
-				}
-
-				if ( document.body ) {
-					document.body.removeAttribute( 'data-tmbc-state' );
-				}
-			} catch ( err ) {
-				window.TMB_CHAT_ERROR = String( ( err && err.stack ) || err );
-				tmbChatGuard( 'boot-error' );
-			}
+			start( cfg );
 		} else if ( tries >= 30 ) {
 			window.clearInterval( timer );
 			window.TMB_CHAT_ERROR = 'no configuration found (TMB_CHAT, data-tmbc-config, data-tmbc-rest, origin)';
 			tmbChatGuard( 'no-config' );
 		}
 	}, 100 );
-
-	tmbChatGuard( 'waiting', true );
 } )();

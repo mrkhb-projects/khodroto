@@ -51,7 +51,11 @@ class TMB_Chat {
 	public function __construct() {
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'assets' ), 20 );
-		add_action( 'wp_footer', array( $this, 'render' ), 98 );
+		/*
+		 * Priority 5 on purpose: WordPress prints footer scripts on wp_footer at
+		 * priority 20, and chat.js needs #tmbc-root to exist when it runs.
+		 */
+		add_action( 'wp_footer', array( $this, 'render' ), 5 );
 		add_action( 'init', array( $this, 'cron_setup' ) );
 		add_action( 'template_redirect', array( $this, 'maybe_report' ), 0 );
 		add_action( 'init', array( $this, 'self_heal' ), 6 );
@@ -653,7 +657,7 @@ class TMB_Chat {
 		$html .= '</button>';
 
 		if ( ! $this->rendered ) {
-			add_action( 'wp_footer', array( $this, 'render' ), 97 );
+			add_action( 'wp_footer', array( $this, 'render' ), 5 );
 		}
 
 		return $html;
