@@ -76,6 +76,8 @@ $tmb_settings   = get_option( 'tmb_settings', array() );
 $tmb_drop_chats = ( is_array( $tmb_settings ) && ! empty( $tmb_settings['chat']['delete_on_uninstall'] ) );
 
 delete_option( 'tmb_settings' );
+delete_option( 'tmb_version' );
+delete_option( 'tmb_chat_upgrade_notice' );
 
 if ( $tmb_drop_chats ) {
 	tmb_uninstall_chat_data();
@@ -93,6 +95,8 @@ if ( is_multisite() ) {
 		$tmb_blog_settings = get_option( 'tmb_settings', array() );
 
 		delete_option( 'tmb_settings' );
+		delete_option( 'tmb_version' );
+		delete_option( 'tmb_chat_upgrade_notice' );
 
 		if ( $tmb_drop_chats || ( is_array( $tmb_blog_settings ) && ! empty( $tmb_blog_settings['chat']['delete_on_uninstall'] ) ) ) {
 			tmb_uninstall_chat_data();

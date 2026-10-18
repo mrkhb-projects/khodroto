@@ -45,6 +45,60 @@ class TMB_Chat_Admin {
 		add_action( 'wp_ajax_tmb_chat_delete_webhook', array( $this, 'ajax_delete_webhook' ) );
 		add_action( 'wp_ajax_tmb_chat_webhook_info', array( $this, 'ajax_webhook_info' ) );
 		add_action( 'wp_ajax_tmb_chat_poll_now', array( $this, 'ajax_poll_now' ) );
+
+		add_action( 'admin_init', array( $this, 'maybe_clear_notice' ) );
+		add_action( 'admin_notices', array( $this, 'upgrade_notice' ) );
+	}
+
+	/**
+	 * Drop the "chat was turned on for you" notice once it is not needed.
+	 *
+	 * @return void
+	 */
+	public function maybe_clear_notice() {
+		if ( ! get_option( 'tmb_chat_upgrade_notice' ) ) {
+			return;
+		}
+
+		$dismissed = isset( $_GET['tmb_chat_notice'] ); // phpcs:ignore WordPress.Security.NonceVerification
+
+		if ( $dismissed && current_user_can( 'manage_options' ) ) {
+			delete_option( 'tmb_chat_upgrade_notice' );
+			return;
+		}
+
+		// Bale is connected - nothing left to remind the admin about.
+		if ( TMB_Chat_Bale::is_ready() ) {
+			delete_option( 'tmb_chat_upgrade_notice' );
+		}
+	}
+
+	/**
+	 * One time notice after the 3.2.0 update.
+	 *
+	 * @return void
+	 */
+	public function upgrade_notice() {
+		if ( ! get_option( 'tmb_chat_upgrade_notice' ) || ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+
+		$settings_url = admin_url( 'admin.php?page=tamas-box#tab-chat' );
+		$hide_url     = add_query_arg( 'tmb_chat_notice', '0' );
+		?>
+		<div class="notice notice-info is-dismissible">
+			<p>
+				<strong><?php esc_html_e( 'تماس باکس ۳.۲ — چت آنلاین فعال شد.', 'tamas-box' ); ?></strong>
+				<?php esc_html_e( 'یک آیتم «چت آنلاین» به باکس‌های تماس شما اضافه شد.', 'tamas-box' ); ?>
+			</p>
+			<p>
+				<?php esc_html_e( 'برای اینکه پیام‌های مشتری در بله به دست شما برسد، توکن بازو و شناسه چت خود را وارد کنید:', 'tamas-box' ); ?>
+				<a class="button button-primary" href="<?php echo esc_url( $settings_url ); ?>"><?php esc_html_e( 'اتصال به بله', 'tamas-box' ); ?></a>
+				<a class="button" href="<?php echo esc_url( admin_url( 'admin.php?page=' . self::INBOX_SLUG ) ); ?>"><?php esc_html_e( 'صندوق گفتگوها', 'tamas-box' ); ?></a>
+				<a href="<?php echo esc_url( $hide_url ); ?>"><?php esc_html_e( 'بعداً', 'tamas-box' ); ?></a>
+			</p>
+		</div>
+		<?php
 	}
 
 	/**

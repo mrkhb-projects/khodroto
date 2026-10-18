@@ -42,6 +42,9 @@ require_once TMB_PATH . 'includes/class-tmb-frontend.php';
 function tmb_init() {
 	load_plugin_textdomain( 'tamas-box', false, dirname( plugin_basename( TMB_FILE ) ) . '/languages' );
 
+	// Runs the one time upgrade routine (3.2.0 adds the live chat module).
+	TMB_Settings::maybe_upgrade();
+
 	if ( is_admin() ) {
 		new TMB_Admin();
 		TMB_Chat_Admin::instance();
@@ -59,6 +62,8 @@ function tmb_activate() {
 	if ( false === get_option( TMB_OPTION ) ) {
 		add_option( TMB_OPTION, TMB_Settings::defaults() );
 	}
+
+	update_option( 'tmb_version', TMB_VERSION );
 
 	// Live chat tables (safe to re-run, uses dbDelta).
 	TMB_Chat_DB::install( true );

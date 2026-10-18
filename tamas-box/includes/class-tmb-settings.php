@@ -397,6 +397,104 @@ class TMB_Settings {
 	}
 
 	/**
+	 * One time upgrade routine, runs when the stored version is older.
+	 *
+	 * 3.2.0: switch the live chat module on and give every contact box a
+	 * "چت آنلاین" item so the feature is usable right after the update.
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade() {
+		$stored = (string) get_option( 'tmb_version', '' );
+
+		if ( $stored === TMB_VERSION ) {
+			return;
+		}
+
+		$saved  = get_option( TMB_OPTION, array() );
+		$fresh  = ( false === get_option( TMB_OPTION, false ) );
+
+		if ( ! is_array( $saved ) ) {
+			$saved = array();
+		}
+
+		/*
+		 * A brand new install keeps everything as shipped: the admin switches
+		 * the module on in the "چت آنلاین" tab and adds the button there.
+		 */
+		if ( $fresh ) {
+			update_option( 'tmb_version', TMB_VERSION );
+			return;
+		}
+
+		// Legacy (v1/v2) single box -> bring it to the v3 shape first.
+		if ( ! isset( $saved['boxes'] ) && ! empty( $saved ) ) {
+			$saved = self::migrate( $saved );
+		}
+
+		if ( ! isset( $saved['boxes'] ) || ! is_array( $saved['boxes'] ) ) {
+			$saved['boxes'] = array( self::box_defaults() );
+		}
+
+		$added = false;
+
+		foreach ( $saved['boxes'] as $index => $box ) {
+			if ( ! is_array( $box ) ) {
+				continue;
+			}
+
+			$items = ( isset( $box['items'] ) && is_array( $box['items'] ) ) ? $box['items'] : array();
+			$has   = false;
+
+			foreach ( $items as $item ) {
+				if ( is_array( $item ) && isset( $item['action'] ) && 'chat' === $item['action'] ) {
+					$has = true;
+					break;
+				}
+			}
+
+			if ( $has ) {
+				continue;
+			}
+
+			$items[] = array(
+				'enabled'      => 1,
+				'action'       => 'chat',
+				'label'        => __( 'چت آنلاین', 'tamas-box' ),
+				'sublabel'     => __( 'پاسخگویی آنی', 'tamas-box' ),
+				'icon'         => 'chat',
+				'url'          => '#tmb-chat',
+				'color'        => '#c99a5b',
+				'custom_color' => 0,
+				'new_tab'      => 0,
+				'nofollow'     => 0,
+				'device'       => 'both',
+			);
+
+			$box['items']            = $items;
+			$saved['boxes'][ $index ] = $box;
+			$added                   = true;
+		}
+
+		if ( ! isset( $saved['chat'] ) || ! is_array( $saved['chat'] ) ) {
+			$saved['chat'] = array();
+		}
+
+		// An existing site gets the module turned on - that is what this update is for.
+		if ( empty( $saved['chat']['enabled'] ) ) {
+			$saved['chat']['enabled'] = 1;
+			$added                    = true;
+		}
+
+		if ( $added ) {
+			update_option( TMB_OPTION, $saved );
+			update_option( 'tmb_chat_upgrade_notice', 1 );
+		}
+
+		update_option( 'tmb_version', TMB_VERSION );
+	}
+
+	/**
 	 * Convert a v1/v2 flat option into the v3 multi-box format.
 	 *
 	 * @param array $old Old settings.
