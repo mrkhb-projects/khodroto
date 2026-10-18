@@ -53,7 +53,7 @@ class TMB_Chat {
 		add_action( 'wp_enqueue_scripts', array( $this, 'assets' ), 20 );
 		add_action( 'wp_footer', array( $this, 'render' ), 98 );
 		add_action( 'init', array( $this, 'cron_setup' ) );
-		add_action( 'init', array( $this, 'maybe_report' ), 5 );
+		add_action( 'template_redirect', array( $this, 'maybe_report' ), 0 );
 		add_action( 'init', array( $this, 'self_heal' ), 6 );
 		add_action( self::CRON_HOOK, array( $this, 'cron_tick' ) );
 		add_filter( 'cron_schedules', array( $this, 'cron_interval' ) );
@@ -370,6 +370,124 @@ class TMB_Chat {
 		$this->enqueue_assets();
 
 		echo $this->widget_markup(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+		if ( isset( $_GET['tmb_selftest'] ) ) {
+			echo $this->selftest_markup(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+		}
+	}
+
+	/**
+	 * Browser side self test, printed only on ?tmb_selftest=1.
+	 *
+	 * Opens the chat exactly like a visitor click would, measures what the
+	 * browser ends up with (classes, computed css, bounding box, js errors) and
+	 * posts it back to /chat/selftest, where the diagnostics report picks it up.
+	 *
+	 * @return string
+	 */
+	protected function selftest_markup() {
+		$rest = esc_url_raw( rest_url( self::REST_NAMESPACE . '/chat' ) );
+		$ver  = TMB_VERSION;
+
+		return '<script id="tmbc-selftest">
+( function () {
+	var REST = ' . wp_json_encode( $rest ) . ';
+	var errs = [];
+
+	window.addEventListener( "error", function ( e ) {
+		errs.push( String( e.message || e ) + " @" + String( e.filename || "" ).split( "/" ).pop() + ":" + e.lineno );
+	} );
+	window.addEventListener( "unhandledrejection", function ( e ) {
+		var r = e && e.reason;
+		errs.push( "promise: " + String( ( r && r.message ) || r ) );
+	} );
+
+	function send( payload ) {
+		try {
+			var x = new XMLHttpRequest();
+			x.open( "POST", REST + "/selftest", true );
+			x.setRequestHeader( "Content-Type", "application/json" );
+			x.withCredentials = true;
+			x.send( JSON.stringify( payload ) );
+		} catch ( e ) {}
+	}
+
+	function run() {
+		var root = document.getElementById( "tmbc-root" );
+		var api = window.TamasBoxChat;
+		var p = {
+			v: ' . wp_json_encode( $ver ) . ',
+			href: String( location.href ).slice( 0, 200 ),
+			ua: String( navigator.userAgent ).slice( 0, 220 ),
+			root: !! root,
+			rootClass: root ? String( root.className ) : "",
+			api: !! api,
+			inlineCfg: !! ( window.TMB_CHAT && window.TMB_CHAT.rest ),
+			attrCfg: !! ( root && root.getAttribute( "data-tmbc-config" ) ),
+			bootError: String( window.TMB_CHAT_ERROR || "" ).slice( 0, 500 ),
+			bodyState: document.body ? String( document.body.getAttribute( "data-tmbc-state" ) || "" ) : "",
+			jq: !! window.jQuery,
+			errors: errs.slice( 0, 6 )
+		};
+
+		if ( ! api ) {
+			send( p );
+			return;
+		}
+
+		var probe = document.createElement( "a" );
+		probe.setAttribute( "href", "#tmb-chat" );
+		probe.setAttribute( "data-tmb-action", "chat" );
+		probe.style.display = "none";
+		document.body.appendChild( probe );
+
+		var ev;
+		try {
+			ev = new MouseEvent( "click", { bubbles: true, cancelable: true } );
+		} catch ( e ) {
+			ev = document.createEvent( "MouseEvents" );
+			ev.initEvent( "click", true, true );
+		}
+		probe.dispatchEvent( ev );
+		p.prevented = !! ev.defaultPrevented;
+
+		window.setTimeout( function () {
+			var panel = document.getElementById( "tmbc-panel" );
+
+			p.opened = !! ( root && root.classList.contains( "is-open" ) );
+			p.panelFound = !! panel;
+			p.panelHidden = panel ? !! panel.hidden : null;
+
+			if ( panel ) {
+				var cs = window.getComputedStyle( panel );
+				var r = panel.getBoundingClientRect();
+				p.panelCss = cs.display + "/" + cs.visibility + "/" + cs.opacity + "/z=" + cs.zIndex;
+				p.panelBox = Math.round( r.width ) + "x" + Math.round( r.height ) + "@" + Math.round( r.left ) + "," + Math.round( r.top );
+			}
+			if ( root ) {
+				var rs = window.getComputedStyle( root );
+				var rr = root.getBoundingClientRect();
+				p.rootCss = rs.display + "/z=" + rs.zIndex;
+				p.rootBox = Math.round( rr.width ) + "x" + Math.round( rr.height ) + "@" + Math.round( rr.left ) + "," + Math.round( rr.top );
+				p.rootClassAfter = String( root.className );
+			}
+
+			try { api.close(); } catch ( e ) {}
+			if ( probe.parentNode ) { probe.parentNode.removeChild( probe ); }
+
+			send( p );
+		}, 3000 );
+	}
+
+	if ( "complete" === document.readyState ) {
+		window.setTimeout( run, 1000 );
+	} else {
+		window.addEventListener( "load", function () {
+			window.setTimeout( run, 1000 );
+		} );
+	}
+} )();
+</script>';
 	}
 
 	/**
@@ -574,6 +692,16 @@ class TMB_Chat {
 			array(
 				'methods'             => WP_REST_Server::CREATABLE,
 				'callback'            => array( $this, 'rest_session' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+
+		register_rest_route(
+			$ns,
+			'/chat/selftest',
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'rest_selftest' ),
 				'permission_callback' => '__return_true',
 			)
 		);
@@ -1026,6 +1154,66 @@ class TMB_Chat {
 
 	/**
 	 * POST /chat/message - visitor sends a message.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	/**
+	 * POST /chat/selftest - browser side diagnostics.
+	 *
+	 * Only printed on ?tmb_selftest=1, so it never runs for normal visitors.
+	 * It reports what the browser actually sees: is the widget in the DOM, did
+	 * chat.js boot, did the click open the panel, and which CSS box the panel
+	 * ended up in. That is the part of the story a server side report cannot
+	 * see (theme js errors, css overrides, optimiser plugins).
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function rest_selftest( $request ) {
+		$wait = $this->throttle( 'selftest', 30, 60 );
+
+		if ( $wait ) {
+			return $this->error( 'tmb_throttled', __( 'کمی صبر کنید.', 'tamas-box' ), 429 );
+		}
+
+		$params = $request->get_json_params();
+
+		if ( ! is_array( $params ) ) {
+			$params = (array) $request->get_params();
+		}
+
+		$clean = array();
+
+		foreach ( $params as $key => $value ) {
+			$key = substr( (string) preg_replace( '/[^A-Za-z0-9_]/', '', (string) $key ), 0, 28 );
+
+			if ( '' === $key ) {
+				continue;
+			}
+
+			if ( is_array( $value ) ) {
+				$list = array();
+				foreach ( array_slice( $value, 0, 8, true ) as $row ) {
+					if ( is_scalar( $row ) ) {
+						$list[] = substr( sanitize_text_field( (string) $row ), 0, 260 );
+					}
+				}
+				$clean[ $key ] = $list;
+			} elseif ( is_scalar( $value ) ) {
+				$clean[ $key ] = substr( sanitize_text_field( (string) $value ), 0, 500 );
+			}
+		}
+
+		$clean['time'] = time();
+
+		TMB_Chat_DB::set_state( 'selftest', $clean );
+
+		return rest_ensure_response( array( 'ok' => true ) );
+	}
+
+	/**
+	 * POST /chat/message.
 	 *
 	 * @param WP_REST_Request $request Request.
 	 * @return WP_REST_Response|WP_Error

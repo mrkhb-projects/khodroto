@@ -310,6 +310,14 @@ class TMB_Chat_Admin {
 						value="<?php echo esc_attr( add_query_arg( 'tmb_chat_report', '1', home_url( '/' ) ) ); ?>">
 				</p>
 
+				<p class="tmb-note tmb-note-warn">
+					<strong><?php esc_html_e( 'خودآزمایی مرورگر (وقتی دکمه چت کار نمی‌کند):', 'tamas-box' ); ?></strong>
+					<?php esc_html_e( 'ابتدا این آدرس را در مرورگر باز کنید و ۶ ثانیه صبر کنید (چت یک‌بار خودکار باز و بسته می‌شود و نتیجه به سایت گزارش می‌شود)، سپس گزارش عیب‌یابی را بگیرید - بخش «خودآزمایی مرورگر» پر شده است:', 'tamas-box' ); ?>
+					<br>
+					<input type="text" readonly dir="ltr" style="width:100%;direction:ltr;font-family:monospace" onclick="this.select()"
+						value="<?php echo esc_attr( add_query_arg( 'tmb_selftest', '1', home_url( '/' ) ) ); ?>">
+				</p>
+
 				<p class="tmb-note">
 					<strong><?php esc_html_e( 'گزارش در یک آدرس اینترنتی:', 'tamas-box' ); ?></strong>
 					<?php esc_html_e( 'اگر دکمه بالا کار نکرد، این آدرس را در مرورگر باز کنید (باید وارد پیشخوان شده باشید)، سپس همه متن را انتخاب و کپی کنید:', 'tamas-box' ); ?>
@@ -1571,6 +1579,26 @@ class TMB_Chat_Admin {
 			}
 		}
 
+		$js_url = TMB_URL . 'assets/js/chat.js?ver=' . TMB_VERSION;
+		$js     = wp_remote_get( $js_url, array( 'timeout' => 20, 'sslverify' => false ) );
+
+		if ( is_wp_error( $js ) ) {
+			$L[] = '  ✖ فایل chat.js از خود سایت قابل دریافت نیست: ' . $js->get_error_message();
+		} else {
+			$js_body = (string) wp_remote_retrieve_body( $js );
+			$js_type = (string) wp_remote_retrieve_header( $js, 'content-type' );
+
+			$L[] = '  پاسخ فایل chat.js: HTTP ' . (int) wp_remote_retrieve_response_code( $js )
+				. ' | Content-Type: ' . ( $js_type ? $js_type : '(خالی!)' ) . ' | ' . number_format( strlen( $js_body ) ) . ' بایت';
+			$L[] = '  محتوای فایل، نسخه جدید است: ' . $yn( false !== strpos( $js_body, 'tmbChatPickConfig' ) )
+				. ( false !== strpos( $js_body, 'tmbChatPickConfig' ) ? '' : ' ← مرورگر نسخه کش‌شده/قدیمی را می‌گیرد' );
+			$L[] = '  فایل با اسکریپت واقعی جواب داده (نه صفحه خطا): ' . $yn( 0 === strpos( ltrim( $js_body ), '/**' ) );
+
+			if ( false === stripos( $js_type, 'javascript' ) && '' !== $js_type ) {
+				$L[] = '  ⚠ Content-Type فایل جاوااسکریپت درست نیست؛ مرورگر اجرا را با پیام «Refused to execute script» رد می‌کند.';
+			}
+		}
+
 		$L[]    = '';
 		$L[]    = '[تست زنده API بله]';
 
@@ -1592,8 +1620,76 @@ class TMB_Chat_Admin {
 				. ( ! empty( $r['last_error_message'] ) ? ' | last_error=' . $r['last_error_message'] : '' );
 		}
 
-		$pull = TMB_Chat_Bale::pull_updates( 3 );
-		$L[]  = 'pull_updates (تست دستی): ' . (int) $pull . ' پیام پردازش شد';
+		if ( 'poll' === $c['bale_mode'] ) {
+			$pull = TMB_Chat_Bale::pull_updates( 3 );
+			$L[]  = 'pull_updates (تست دستی): ' . (int) $pull . ' پیام پردازش شد';
+		} else {
+			$L[] = 'pull_updates: در حالت وب‌هوک اجرا نمی‌شود (بله اجازه getUpdates همزمان با وب‌هوک فعال را نمی‌دهد و خطای 409 می‌دهد) - پیام‌ها از همان وب‌هوک می‌آیند';
+		}
+		$L[] = '';
+		$L[] = '[خودآزمایی مرورگر]';
+
+		$self     = TMB_Chat_DB::get_state( 'selftest', array() );
+		$self_url = add_query_arg( 'tmb_selftest', '1', home_url( '/' ) );
+
+		if ( ! is_array( $self ) || empty( $self ) ) {
+			$L[] = '  هنوز نتیجه‌ای ثبت نشده است. این آدرس را در مرورگر باز کنید، ۶ ثانیه صبر کنید، سپس همین گزارش را دوباره بگیرید:';
+			$L[] = '  ' . $self_url;
+		} else {
+			$labels = array(
+				'time'           => 'زمان',
+				'v'              => 'نسخه',
+				'href'           => 'صفحه',
+				'ua'             => 'مرورگر',
+				'root'           => 'ویجت در DOM هست',
+				'api'            => 'TamasBoxChat ساخته شده',
+				'inlineCfg'      => 'تنظیمات inline (TMB_CHAT)',
+				'attrCfg'        => 'تنظیمات روی ویجت (data-tmbc-config)',
+				'prevented'      => 'کلیک، ناوبری به #tmb-chat را لغو کرد',
+				'opened'         => 'پنجره چت باز شد',
+				'panelFound'     => 'پنل پیدا شد',
+				'panelHidden'    => 'پنل hidden است',
+				'panelCss'       => 'CSS پنل (display/visibility/opacity/z)',
+				'panelBox'       => 'اندازه و جای پنل',
+				'rootCss'        => 'CSS ریشه (display/z)',
+				'rootBox'        => 'اندازه و جای ریشه',
+				'rootClass'      => 'کلاس‌های ریشه (قبل از کلیک)',
+				'rootClassAfter' => 'کلاس‌های ریشه (بعد از کلیک)',
+				'bodyState'      => 'وضعیت محافظ (data-tmbc-state)',
+				'jq'             => 'jQuery در صفحه',
+				'bootError'      => 'خطای راه‌اندازی اسکریپت',
+			);
+
+			foreach ( $labels as $key => $label ) {
+				if ( ! array_key_exists( $key, $self ) ) {
+					continue;
+				}
+
+				$value = $self[ $key ];
+
+				if ( 'time' === $key ) {
+					$value = wp_date( 'Y-m-d H:i:s', (int) $value );
+				} elseif ( is_bool( $value ) ) {
+					$value = $value ? 'بله ✔' : 'خیر ✖';
+				} elseif ( '' === $value ) {
+					$value = '(خالی)';
+				}
+
+				$L[] = '  ' . $label . ': ' . $value;
+			}
+
+			if ( ! empty( $self['errors'] ) && is_array( $self['errors'] ) ) {
+				$L[] = '  خطاهای جاوااسکریپت صفحه:';
+				foreach ( $self['errors'] as $one ) {
+					$L[] = '    - ' . $one;
+				}
+			} else {
+				$L[] = '  خطاهای جاوااسکریپت صفحه: هیچ ✔';
+			}
+
+			$L[] = '  (برای تازه‌سازی نتیجه، دوباره این آدرس را باز کنید: ' . $self_url . ')';
+		}
+
 		$L[]  = '';
 		$L[]  = '—— پایان گزارش ——';
 

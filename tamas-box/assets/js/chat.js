@@ -94,7 +94,7 @@ function tmbChatGuard( reason, temporary ) {
 		document.body.setAttribute( 'data-tmbc-state', 'blocked-' + reason );
 	}
 
-	document.addEventListener( 'click', function ( e ) {
+	window.addEventListener( 'click', function ( e ) {
 		var node = e.target;
 
 		while ( node && node !== document ) {
@@ -112,7 +112,8 @@ function tmbChatGuard( reason, temporary ) {
 					e.stopPropagation();
 
 					if ( window.console && window.console.error ) {
-						window.console.error( '[Tamas Box Chat] پیکربندی چت پیدا نشد (' + reason + ') - اسکریپت chat.js اجرا شد ولی window.TMB_CHAT و data-tmbc-config در دسترس نبودند.' );
+						window.console.error( '[Tamas Box Chat] چت باز نشد (' + reason + ')' +
+							( window.TMB_CHAT_ERROR ? ' — ' + window.TMB_CHAT_ERROR : '' ) );
 					}
 
 					if ( ! temporary ) {
@@ -306,12 +307,13 @@ function tmbChatBoot( RAW ) {
 	if ( ! root ) {
 		/*
 		 * The script is loaded but the window itself was never printed. Say so
-		 * loudly in the console - it makes support a lot faster.
+		 * loudly in the console and let the caller put the guard in place, so a
+		 * chat item on the page still explains itself instead of doing nothing.
 		 */
 		if ( window.console && window.console.warn ) {
 			window.console.warn( '[Tamas Box Chat] #tmbc-root پیدا نشد: ماژول چت خاموش است یا قالب سایت wp_footer() را صدا نمی‌زند.' );
 		}
-		return;
+		return false;
 	}
 
 	var el = {
@@ -1412,8 +1414,21 @@ function tmbChatBoot( RAW ) {
 		}
 	} );
 
+	/*
+	 * Last resort: the chat item is a plain anchor to #tmb-chat. If anything on
+	 * the page swallows the click before it reaches us, the browser still puts
+	 * #tmb-chat in the address bar - so treat that hash as "open the chat".
+	 */
+	function hashOpen() {
+		if ( window.location && '#tmb-chat' === String( window.location.hash ) ) {
+			open();
+		}
+	}
+
+	window.addEventListener( 'hashchange', hashOpen );
+
 	/* contact box items + shortcode buttons + anything pointing at #tmb-chat */
-	document.addEventListener( 'click', function ( e ) {
+	window.addEventListener( 'click', function ( e ) {
 		var node = e.target;
 
 		while ( node && node !== document ) {
@@ -1482,6 +1497,7 @@ function tmbChatBoot( RAW ) {
 		}
 
 		autoOpen();
+		hashOpen();
 
 		/* unread counter for the contact box badges */
 		if ( C.badge ) {
@@ -1533,6 +1549,8 @@ function tmbChatBoot( RAW ) {
 		},
 		version: txt( RAW.version, '' )
 	};
+
+	return true;
 }
 
 /* ------------------------------------------------------------------
@@ -1540,7 +1558,16 @@ function tmbChatBoot( RAW ) {
  * ---------------------------------------------------------------- */
 
 ( function () {
+	/*
+	 * The guard goes on FIRST, whatever happens next. If booting throws halfway
+	 * (an old browser, a theme that breaks a DOM api, a js error above us) the
+	 * chat button still does not turn into a plain #tmb-chat link, and the
+	 * reason ends up in window.TMB_CHAT_ERROR where the self test can find it.
+	 */
+	tmbChatGuard( 'booting', true );
+
 	if ( ! window.Promise ) {
+		window.TMB_CHAT_ERROR = 'window.Promise is not available';
 		tmbChatGuard( 'no-promise' );
 		return;
 	}
@@ -1549,7 +1576,26 @@ function tmbChatBoot( RAW ) {
 
 	if ( cfg && cfg.rest ) {
 		window.TMB_CHAT = cfg;
-		tmbChatBoot( cfg );
+
+		try {
+			if ( false === tmbChatBoot( cfg ) ) {
+				window.TMB_CHAT_ERROR = window.TMB_CHAT_ERROR || 'widget markup (#tmbc-root) is missing from the page';
+				tmbChatGuard( 'no-markup' );
+				return;
+			}
+
+			if ( document.body ) {
+				document.body.removeAttribute( 'data-tmbc-state' );
+			}
+		} catch ( err ) {
+			window.TMB_CHAT_ERROR = String( ( err && err.stack ) || err );
+
+			if ( window.console && window.console.error ) {
+				window.console.error( '[Tamas Box Chat] راه‌اندازی ویجت ناموفق بود:', err );
+			}
+
+			tmbChatGuard( 'boot-error' );
+		}
 		return;
 	}
 
@@ -1566,13 +1612,24 @@ function tmbChatBoot( RAW ) {
 		if ( cfg && cfg.rest ) {
 			window.clearInterval( timer );
 			window.TMB_CHAT = cfg;
-			tmbChatBoot( cfg );
 
-			if ( document.body ) {
-				document.body.removeAttribute( 'data-tmbc-state' );
+			try {
+				if ( false === tmbChatBoot( cfg ) ) {
+					window.TMB_CHAT_ERROR = window.TMB_CHAT_ERROR || 'widget markup (#tmbc-root) is missing from the page';
+					tmbChatGuard( 'no-markup' );
+					return;
+				}
+
+				if ( document.body ) {
+					document.body.removeAttribute( 'data-tmbc-state' );
+				}
+			} catch ( err ) {
+				window.TMB_CHAT_ERROR = String( ( err && err.stack ) || err );
+				tmbChatGuard( 'boot-error' );
 			}
 		} else if ( tries >= 30 ) {
 			window.clearInterval( timer );
+			window.TMB_CHAT_ERROR = 'no configuration found (TMB_CHAT, data-tmbc-config, data-tmbc-rest, origin)';
 			tmbChatGuard( 'no-config' );
 		}
 	}, 100 );
