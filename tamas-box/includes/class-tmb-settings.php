@@ -78,7 +78,9 @@ class TMB_Settings {
 	public static function chat_defaults( $over = array() ) {
 		$chat = array(
 			/* کلی */
-			'enabled'             => 0,
+			// On by default: a contact plugin that ships a chat tab is meant to be used,
+			// and a chat item that renders while the module is off is a dead button.
+			'enabled'             => 1,
 			'launcher'            => 'item',      // item | button | both
 			'launcher_position'   => 'bottom-left',
 			'launcher_offset_x'   => 20,

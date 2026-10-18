@@ -300,6 +300,22 @@ class TMB_Chat_Admin {
 					<button type="button" class="button" data-tmb-chat="diag">🩺 <?php esc_html_e( 'گزارش عیب‌یابی', 'tamas-box' ); ?></button>
 				</div>
 
+				<p class="tmb-note">
+					<strong><?php esc_html_e( 'گزارش در یک آدرس اینترنتی:', 'tamas-box' ); ?></strong>
+					<?php esc_html_e( 'اگر دکمه بالا کار نکرد، این آدرس را در مرورگر باز کنید (باید وارد پیشخوان شده باشید)، سپس همه متن را انتخاب و کپی کنید:', 'tamas-box' ); ?>
+					<br>
+					<input type="text" readonly dir="ltr" style="width:100%;direction:ltr;font-family:monospace" onclick="this.select()"
+						value="<?php echo esc_attr( add_query_arg( 'tmb_chat_report', '1', home_url( '/' ) ) ); ?>">
+				</p>
+
+				<p class="tmb-note">
+					<strong><?php esc_html_e( 'گزارش در یک آدرس اینترنتی:', 'tamas-box' ); ?></strong>
+					<?php esc_html_e( 'اگر دکمه بالا کار نکرد، این آدرس را در مرورگر باز کنید (باید وارد پیشخوان شده باشید)، سپس همه متن را انتخاب و کپی کنید:', 'tamas-box' ); ?>
+					<br>
+					<input type="text" readonly dir="ltr" style="width:100%;direction:ltr;font-family:monospace" onclick="this.select()"
+						value="<?php echo esc_attr( add_query_arg( 'tmb_chat_report', '1', home_url( '/' ) ) ); ?>">
+				</p>
+
 				<div class="tmb-chat-result" data-tmb-chat-result hidden></div>
 
 				<div class="tmb-field">
@@ -1320,7 +1336,19 @@ class TMB_Chat_Admin {
 	public function ajax_diag() {
 		$this->guard();
 
-		$yn = function ( $value ) {
+		wp_send_json_success( array( 'message' => self::diag_report() ) );
+	}
+
+	/**
+	 * Build the diagnostics report as plain text.
+	 *
+	 * Also served on ?tmb_chat_report=1 (see TMB_Chat::maybe_report()) so it can
+	 * be opened in a browser tab and copy pasted into a support message.
+	 *
+	 * @return string
+	 */
+	public static function diag_report() {
+	$yn = function ( $value ) {
 			return $value ? 'بله ✔' : 'خیر ✖';
 		};
 
@@ -1331,7 +1359,9 @@ class TMB_Chat_Admin {
 
 		$L   = array();
 		$L[] = '—— گزارش عیب‌یابی تماس باکس ——';
-		$L[] = 'نسخه افزونه: ' . TMB_VERSION . ' | وردپرس: ' . get_bloginfo( 'version' ) . ' | PHP: ' . PHP_VERSION;
+		$header = get_file_data( TMB_FILE, array( 'Version' => 'Version' ) );
+		$L[]    = 'نسخه افزونه: ' . TMB_VERSION . ' (هدر فایل: ' . ( isset( $header['Version'] ) ? $header['Version'] : '?' ) . ') | وردپرس: ' . get_bloginfo( 'version' ) . ' | PHP: ' . PHP_VERSION;
+		$L[]    = 'مسیر فایل اصلی: ' . TMB_FILE;
 		$L[] = 'آدرس سایت: ' . home_url() . ( is_ssl() ? ' (HTTPS ✔)' : ' (HTTP ✖ — بله فقط وب‌هوک HTTPS را قبول می‌کند)' );
 		$L[] = 'زمان سرور: ' . wp_date( 'Y-m-d H:i:s' ) . ' | timezone: ' . wp_timezone_string();
 		$L[] = '';
@@ -1345,6 +1375,7 @@ class TMB_Chat_Admin {
 			? 'خاموش (همیشه آنلاین)'
 			: trim( $c['hours_from'] ) . '–' . trim( $c['hours_to'] ) . ' روزها: ' . ( (array) $c['hours_days'] ? implode( ',', (array) $c['hours_days'] ) : 'همه' ) );
 		$L[] = 'همین حالا آنلاین؟ ' . $yn( TMB_Chat::is_online() );
+		$L[] = 'پنجره چت در همین درخواست چاپ می‌شود؟ ' . $yn( TMB_Chat::instance()->should_render() ) . '  ← اگر «خیر» است، دکمه چت هیچ کاری نمی‌کند';
 		$L[] = 'بازه‌ی بررسی پیام (ثانیه): ' . $c['poll_interval'] . ' / حالت بسته: ' . $c['poll_closed'];
 		$L[] = '';
 		$L[] = '[باکس‌ها و آیتم چت]';
@@ -1380,11 +1411,13 @@ class TMB_Chat_Admin {
 		$L[] = 'آدرس API: ' . $c['bale_api_base'];
 		$L[] = 'نمونه فراخوانی: ' . str_replace( (string) $c['bale_token'], '****', TMB_Chat_Bale::endpoint( '/getMe' ) );
 		$L[] = 'شناسه چت مدیران: ' . ( '' !== trim( (string) $c['bale_chat_ids'] ) ? str_replace( array( "
-", "
-" ), ' , ', (string) $c['bale_chat_ids'] ) : 'خالی ✖ ← پیام مشتریان به هیچ‌کس نمی‌رسد' );
+	", "
+	" ), ' , ', (string) $c['bale_chat_ids'] ) : 'خالی ✖ ← پیام مشتریان به هیچ‌کس نمی‌رسد' );
 		$L[] = 'نام کاربری بازو: ' . ( $c['bale_bot_username'] ? '@' . $c['bale_bot_username'] : 'ناشناخته' );
 		$L[] = 'is_ready(): ' . $yn( TMB_Chat_Bale::is_ready() );
-		$L[] = 'روش دریافت پاسخ: ' . $c['bale_mode'];
+		$L[] = 'https بودن home_url: ' . $yn( 'https' === wp_parse_url( home_url(), PHP_URL_SCHEME ) ) . '  ← بله فقط وب‌هوک https را قبول می‌کند';
+		$L[] = 'روش دریافت پاسخ: ' . $c['bale_mode']
+			. ( (int) TMB_Chat_DB::get_state( 'mode_switched_http', 0 ) ? ' (افزونه به‌خاطر http بودن سایت، خودکار به «دریافت خودکار» تغییر داد)' : '' );
 		$L[] = 'آدرس وب‌هوک: ' . TMB_Chat_Bale::webhook_url();
 		$L[] = 'آخرین وب‌هوک دریافتی: ' . ( ! empty( $state['last_webhook'] ) ? wp_date( 'Y-m-d H:i:s', (int) $state['last_webhook'] ) : 'هیچ ✖' );
 		$L[] = 'آخرین getUpdates: ' . ( ! empty( $state['last_poll'] ) ? wp_date( 'Y-m-d H:i:s', (int) $state['last_poll'] ) : 'هیچ' );
@@ -1437,8 +1470,7 @@ class TMB_Chat_Admin {
 		$L[]  = '';
 		$L[]  = '—— پایان گزارش ——';
 
-		wp_send_json_success( array( 'message' => implode( "
-", $L ) ) );
+		return implode( "\n", $L );
 	}
 
 	/**

@@ -53,6 +53,8 @@ class TMB_Chat {
 		add_action( 'wp_enqueue_scripts', array( $this, 'assets' ), 20 );
 		add_action( 'wp_footer', array( $this, 'render' ), 98 );
 		add_action( 'init', array( $this, 'cron_setup' ) );
+		add_action( 'init', array( $this, 'maybe_report' ), 5 );
+		add_action( 'init', array( $this, 'self_heal' ), 6 );
 		add_action( self::CRON_HOOK, array( $this, 'cron_tick' ) );
 		add_filter( 'cron_schedules', array( $this, 'cron_interval' ) );
 
@@ -1714,6 +1716,90 @@ class TMB_Chat {
 		if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
 			wp_schedule_event( time() + 60, 'tmb_two_minutes', self::CRON_HOOK );
 		}
+	}
+
+	/**
+	 * Plain text diagnostics on ?tmb_chat_report=1 (admins only).
+	 *
+	 * Much easier to share than a screenshot: open the url, select all, copy.
+	 *
+	 * @return void
+	 */
+	public function maybe_report() {
+		if ( ! isset( $_GET['tmb_chat_report'] ) ) {
+			return;
+		}
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'برای دیدن این گزارش باید با حساب مدیر وارد شده باشید.', 'tamas-box' ), 403 );
+		}
+
+		nocache_headers();
+		header( 'Content-Type: text/plain; charset=utf-8' );
+
+		echo TMB_Chat_Admin::diag_report(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
+
+		exit;
+	}
+
+	/**
+	 * Fix the two settings mistakes that silently break the Bale bridge.
+	 *
+	 * 1. Webhook mode on a site whose home url is not https - Bale refuses to
+	 *    call an insecure url, so polling is the only thing that can work.
+	 * 2. Nothing here rewrites a token or a chat id: those stay the admin's job.
+	 *
+	 * @return void
+	 */
+	public function self_heal() {
+		if ( is_admin() ) {
+			return;
+		}
+
+		$c = self::cfg();
+
+		if ( empty( $c['enabled'] ) || empty( $c['bale_enabled'] ) || '' === trim( (string) $c['bale_token'] ) ) {
+			return;
+		}
+
+		$https  = ( 'https' === wp_parse_url( home_url(), PHP_URL_SCHEME ) );
+		$switched = (int) TMB_Chat_DB::get_state( 'mode_switched_http', 0 );
+
+		if ( ! $https && 'webhook' === $c['bale_mode'] ) {
+			self::update_chat_settings( array( 'bale_mode' => 'poll' ) );
+			TMB_Chat_DB::set_state( 'mode_switched_http', 1 );
+			return;
+		}
+
+		if ( $https && $switched ) {
+			TMB_Chat_DB::set_state( 'mode_switched_http', 0 );
+		}
+	}
+
+	/**
+	 * Patch a few chat settings without going through the settings form.
+	 *
+	 * @param array $patch Key => value pairs inside the "chat" sub array.
+	 * @return bool
+	 */
+	public static function update_chat_settings( $patch ) {
+		$raw = get_option( TMB_OPTION, array() );
+
+		if ( ! is_array( $raw ) ) {
+			return false;
+		}
+		if ( ! isset( $raw['chat'] ) || ! is_array( $raw['chat'] ) ) {
+			$raw['chat'] = array();
+		}
+
+		foreach ( (array) $patch as $key => $value ) {
+			$raw['chat'][ $key ] = $value;
+		}
+
+		update_option( TMB_OPTION, $raw );
+		self::reset_cfg_cache();
+
+		return true;
 	}
 
 	/**

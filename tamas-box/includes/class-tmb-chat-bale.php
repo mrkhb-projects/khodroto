@@ -109,7 +109,51 @@ class TMB_Chat_Bale {
 	 */
 	public static function api_base() {
 		$c = self::cfg();
-		return untrailingslashit( (string) $c['bale_api_base'] );
+		return self::normalize_base( isset( $c['bale_api_base'] ) ? $c['bale_api_base'] : '' );
+	}
+
+	/**
+	 * Make sure a base url ends with ".../bot".
+	 *
+	 * The token is glued straight onto the base, so "https://tapi.bale.ai"
+	 * (without /bot) would build a broken url. Never trust what is stored.
+	 *
+	 * @param string $base Raw base url.
+	 * @return string
+	 */
+	public static function normalize_base( $base ) {
+		$base = untrailingslashit( trim( (string) $base ) );
+
+		if ( '' === $base || 0 !== strpos( $base, 'https://' ) ) {
+			$base = 'https://tapi.bale.ai/bot';
+		}
+
+		if ( ! preg_match( '#/bot$#', $base ) ) {
+			$base = rtrim( $base, '/' ) . '/bot';
+		}
+
+		return $base;
+	}
+
+	/**
+	 * The other possible base (normal <-> business), used as a one shot
+	 * fallback when Bale answers "Not Found".
+	 *
+	 * @param string $base Current base.
+	 * @return string Empty when there is nothing else to try.
+	 */
+	protected static function alternate_base( $base ) {
+		$base = self::normalize_base( $base );
+
+		if ( false !== strpos( $base, '/business/bot' ) ) {
+			return 'https://tapi.bale.ai/bot';
+		}
+
+		if ( 'https://tapi.bale.ai/bot' === $base ) {
+			return 'https://tapi.bale.ai/business/bot';
+		}
+
+		return '';
 	}
 
 	/**
@@ -160,13 +204,45 @@ class TMB_Chat_Bale {
 			return new WP_Error( 'tmb_no_token', __( 'توکن بازوی بله تنظیم نشده است.', 'tamas-box' ) );
 		}
 
-		$url = self::endpoint( $method );
+		$result = self::request( self::endpoint( $method ), $args, $timeout, $method );
 
+		/*
+		 * "Not Found" almost always means the base url does not fit this bot
+		 * (a business bot lives under /business/bot). Try the other base once
+		 * and, when it works, remember it so the next call is right away.
+		 */
+		if ( is_wp_error( $result ) && 404 === (int) $result->get_error_data() ) {
+			$alt = self::alternate_base( self::api_base() );
+
+			if ( '' !== $alt ) {
+				$alt_result = self::request( self::normalize_base( $alt ) . $c['bale_token'] . '/' . ltrim( $method, '/' ), $args, $timeout, $method );
+
+				if ( ! is_wp_error( $alt_result ) ) {
+					self::save_base( $alt );
+					self::reset_cfg_cache();
+					return $alt_result;
+				}
+			}
+		}
+
+		return $result;
+	}
+
+	/**
+	 * One HTTP request to the Bale API.
+	 *
+	 * @param string $url     Full url (base + token + method).
+	 * @param array  $args    Parameters.
+	 * @param int    $timeout Timeout in seconds.
+	 * @param string $method  Method name (for the error log).
+	 * @return array|WP_Error Decoded response body.
+	 */
+	protected static function request( $url, $args, $timeout, $method ) {
 		$response = wp_remote_post(
 			$url,
 			array(
 				'timeout'     => $timeout,
-				'redirection' => 0,
+				'redirection' => 5,
 				'headers'     => array( 'Content-Type' => 'application/json' ),
 				'body'        => wp_json_encode( $args ),
 			)
@@ -181,19 +257,42 @@ class TMB_Chat_Bale {
 		$body = json_decode( wp_remote_retrieve_body( $response ), true );
 
 		if ( ! is_array( $body ) ) {
-			self::log_error( $method, sprintf( 'HTTP %d - پاسخ نامعتبر', $code ) );
-			return new WP_Error( 'tmb_bad_response', sprintf( __( 'پاسخ نامعتبر از بله (کد %d).', 'tamas-box' ), $code ) );
+			$message = sprintf( 'HTTP %d - پاسخ نامعتبر', $code );
+			self::log_error( $method, $message );
+			return new WP_Error( 'tmb_bad_response', sprintf( __( 'پاسخ نامعتبر از بله (کد %d).', 'tamas-box' ), $code ), $code );
 		}
 
 		if ( empty( $body['ok'] ) ) {
 			$description = isset( $body['description'] ) ? $body['description'] : __( 'خطای نامشخص', 'tamas-box' );
+			$error_code    = isset( $body['error_code'] ) ? (int) $body['error_code'] : $code;
 			self::log_error( $method, $description );
-			return new WP_Error( 'tmb_bale_error', $description, isset( $body['error_code'] ) ? (int) $body['error_code'] : $code );
+			return new WP_Error( 'tmb_bale_error', $description, $error_code );
 		}
 
 		self::log_error( $method, '' );
 
 		return $body;
+	}
+
+	/**
+	 * Persist a working API base into the settings (raw option, no re-sanitize).
+	 *
+	 * @param string $base Base url.
+	 * @return void
+	 */
+	protected static function save_base( $base ) {
+		$raw = get_option( TMB_OPTION, array() );
+
+		if ( ! is_array( $raw ) ) {
+			return;
+		}
+		if ( ! isset( $raw['chat'] ) || ! is_array( $raw['chat'] ) ) {
+			$raw['chat'] = array();
+		}
+
+		$raw['chat']['bale_api_base'] = self::normalize_base( $base );
+
+		update_option( TMB_OPTION, $raw );
 	}
 
 	/**
