@@ -162,8 +162,13 @@
 	var root = document.getElementById( 'tmbc-root' );
 
 	if ( ! root ) {
-		/* The widget markup is not printed (chat disabled for this page) but a
-		 * contact box item may still ask for it - nothing to do here. */
+		/*
+		 * The script is loaded but the window itself was never printed. Say so
+		 * loudly in the console - it makes support a lot faster.
+		 */
+		if ( window.console && window.console.warn ) {
+			window.console.warn( '[Tamas Box Chat] #tmbc-root پیدا نشد: ماژول چت خاموش است یا قالب سایت wp_footer() را صدا نمی‌زند.' );
+		}
 		return;
 	}
 

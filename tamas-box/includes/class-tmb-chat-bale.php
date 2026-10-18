@@ -43,9 +43,21 @@ class TMB_Chat_Bale {
 	 * @return bool
 	 */
 	public static function is_ready() {
+		return self::has_token() && self::admin_chat_ids() !== array();
+	}
+
+	/**
+	 * Is a bot token configured (and sending enabled)?
+	 *
+	 * Weaker than is_ready(): enough to answer /id and to fetch updates even
+	 * before the admin chat ids are known.
+	 *
+	 * @return bool
+	 */
+	public static function has_token() {
 		$c = self::cfg();
 
-		return ! empty( $c['bale_enabled'] ) && '' !== trim( (string) $c['bale_token'] ) && self::admin_chat_ids() !== array();
+		return ! empty( $c['bale_enabled'] ) && '' !== trim( (string) $c['bale_token'] );
 	}
 
 	/**
@@ -103,11 +115,20 @@ class TMB_Chat_Bale {
 	/**
 	 * Full url of a method.
 	 *
-	 * @param string $method Method name.
+	 * Bale expects https://tapi.bale.ai/bot<TOKEN>/<METHOD> - the token is
+	 * part of the path, so forgetting it answers with "Not Found".
+	 *
+	 * @param string $method Method name (with or without a leading slash).
+	 * @param string $token  Optional token override (used before the settings are saved).
 	 * @return string
 	 */
-	protected static function endpoint( $method ) {
-		return self::api_base() . $method;
+	public static function endpoint( $method, $token = '' ) {
+		if ( '' === $token ) {
+			$c     = self::cfg();
+			$token = (string) $c['bale_token'];
+		}
+
+		return self::api_base() . trim( (string) $token ) . '/' . ltrim( (string) $method, '/' );
 	}
 
 	/**
@@ -790,21 +811,39 @@ class TMB_Chat_Bale {
 
 		$c = self::cfg();
 
-		/* nobody except the configured admins may drive the bot */
-		if ( ! empty( $c['only_admins_reply'] ) && ! self::is_admin_chat( $chat_id ) ) {
-			self::reject_stranger( $chat_id );
-			return;
-		}
-
-		$agent_name = self::agent_name( $message );
 		$text       = isset( $message['text'] ) ? trim( (string) $message['text'] ) : '';
+		$is_admin   = self::is_admin_chat( $chat_id );
+		$agent_name = self::agent_name( $message );
 
-		/* ---- commands ---- */
+		/*
+		 * /start, /id and /help are answered to EVERYBODY. Without this the
+		 * owner could never find out their own chat_id, because the "only
+		 * known chats may talk" rule would reject them first.
+		 */
 		if ( '' !== $text && '/' === substr( $text, 0, 1 ) ) {
+			$cmd = self::command_name( $text );
+
+			if ( in_array( $cmd, array( 'start', 'id', 'help' ), true ) ) {
+				self::handle_start_command( $chat_id, $text, $cmd, $is_admin );
+				return;
+			}
+
+			if ( ! $is_admin && ! empty( $c['only_admins_reply'] ) ) {
+				self::reject_stranger( $chat_id );
+				return;
+			}
+
 			if ( empty( $c['bale_commands'] ) ) {
 				return;
 			}
+
 			self::handle_command( $chat_id, $text, $agent_name, $message );
+			return;
+		}
+
+		/* nobody except the configured admins may drive the bot */
+		if ( ! empty( $c['only_admins_reply'] ) && ! $is_admin ) {
+			self::reject_stranger( $chat_id );
 			return;
 		}
 
@@ -855,6 +894,199 @@ class TMB_Chat_Bale {
 				'message_id' => isset( $message['message_id'] ) ? (int) $message['message_id'] : 0,
 			)
 		);
+	}
+
+	/**
+	 * Lowercase command name of a message ("/Reply@mybot 12 hi" -> "reply").
+	 *
+	 * @param string $text Message text.
+	 * @return string
+	 */
+	protected static function command_name( $text ) {
+		$text = ltrim( (string) $text, '/' );
+		$head = preg_split( '/[\s@]+/', $text, 2 );
+		$cmd  = isset( $head[0] ) ? strtolower( trim( (string) $head[0] ) ) : '';
+
+		return preg_replace( '/[^a-z0-9_]/', '', $cmd );
+	}
+
+	/**
+	 * Answer /start, /id and /help - also the "register me as an admin" link.
+	 *
+	 * @param int    $chat_id  Chat.
+	 * @param string $text     Full text (may carry the join parameter).
+	 * @param string $cmd      start|id|help.
+	 * @param bool   $is_admin Already a known admin chat?
+	 * @return void
+	 */
+	protected static function handle_start_command( $chat_id, $text, $cmd, $is_admin ) {
+		/* /start tmbadmin_<code> -> become an admin without touching settings */
+		if ( preg_match( '/tmbadmin_([A-Za-z0-9]{6,64})/', (string) $text, $matches ) ) {
+			if ( self::join_code_ok( $matches[1] ) ) {
+				self::register_admin_chat( $chat_id );
+				self::send_text(
+					$chat_id,
+					'✅ <b>' . esc_html__( 'شما به‌عنوان مدیر گفتگو ثبت شدید.', 'tamas-box' ) . '</b>'
+						. "\n" . esc_html__( 'شناسه چت شما:', 'tamas-box' ) . ' <code>' . esc_html( (string) $chat_id ) . '</code>'
+						. "\n" . esc_html__( 'از این پس پیام مشتریان اینجا می‌آید و می‌توانید پاسخ دهید.', 'tamas-box' ),
+					array(),
+					true
+				);
+				return;
+			}
+
+			self::send_text(
+				$chat_id,
+				'⚠️ ' . esc_html__( 'لینک ثبت مدیر منقضی شده است. در تنظیمات افزونه دوباره «لینک ثبت مدیر» را بسازید.', 'tamas-box' )
+					. "\n" . esc_html__( 'شناسه چت شما:', 'tamas-box' ) . ' <code>' . esc_html( (string) $chat_id ) . '</code>'
+			);
+			return;
+		}
+
+		if ( 'id' === $cmd || ( 'start' === $cmd && ! $is_admin ) ) {
+			$title = '';
+			$line  = '🔑 <b>chat_id</b>: <code>' . esc_html( (string) $chat_id ) . '</code>';
+
+			if ( $is_admin ) {
+				$line .= "\n✅ " . esc_html__( 'این چت به‌عنوان مدیر ثبت شده است.', 'tamas-box' );
+			} else {
+				$line .= "\n" . esc_html__( 'این عدد را در «تماس باکس ← چت آنلاین ← شناسه چت مدیران» وارد کنید و تنظیمات را ذخیره کنید.', 'tamas-box' );
+
+				if ( self::admin_chat_ids() === array() ) {
+					$line .= "\n⚠️ " . esc_html__( 'فعلاً هیچ مدیری ثبت نشده، بنابراین پیام مشتریان به جایی فرستاده نمی‌شود.', 'tamas-box' );
+				}
+			}
+
+			self::send_text( $chat_id, $line . $title );
+			return;
+		}
+
+		self::send_text( $chat_id, self::help_text() );
+
+		if ( ! $is_admin ) {
+			self::send_text(
+				$chat_id,
+				'🔑 <b>chat_id</b>: <code>' . esc_html( (string) $chat_id ) . '</code>'
+			);
+		}
+	}
+
+	/**
+	 * Create (or reuse) a short lived code that turns a Bale chat into an admin.
+	 *
+	 * @return string Join code.
+	 */
+	public static function make_join_code() {
+		$code = substr( md5( wp_generate_password( 24, false, false ) . microtime() ), 0, 20 );
+
+		TMB_Chat_DB::set_state( 'admin_join_code', $code );
+		TMB_Chat_DB::set_state( 'admin_join_exp', time() + DAY_IN_SECONDS );
+
+		return $code;
+	}
+
+	/**
+	 * Is this join code still valid?
+	 *
+	 * @param string $code Code from the deep link.
+	 * @return bool
+	 */
+	protected static function join_code_ok( $code ) {
+		$stored = (string) TMB_Chat_DB::get_state( 'admin_join_code', '' );
+		$exp    = (int) TMB_Chat_DB::get_state( 'admin_join_exp', 0 );
+
+		if ( '' === $stored || $exp < time() ) {
+			return false;
+		}
+
+		if ( ! hash_equals( $stored, (string) $code ) ) {
+			return false;
+		}
+
+		TMB_Chat_DB::set_state( 'admin_join_code', '' );
+		TMB_Chat_DB::set_state( 'admin_join_exp', 0 );
+
+		return true;
+	}
+
+	/**
+	 * Deep link that registers the person who opens it as an admin.
+	 *
+	 * @return string|WP_Error
+	 */
+	public static function admin_join_url() {
+		$c        = self::cfg();
+		$username = trim( (string) $c['bale_bot_username'] );
+
+		if ( '' === $username ) {
+			$username = (string) TMB_Chat_DB::get_state( 'bot_username', '' );
+		}
+
+		if ( '' === $username ) {
+			$me = self::get_me();
+
+			if ( is_wp_error( $me ) ) {
+				return $me;
+			}
+
+			$username = isset( $me['result']['username'] ) ? (string) $me['result']['username'] : '';
+		}
+
+		if ( '' === $username ) {
+			return new WP_Error(
+				'tmb_no_username',
+				__( 'نام کاربری بازو پیدا نشد. ابتدا «تست اتصال» را بزنید یا نام کاربری بازو را در تنظیمات وارد کنید.', 'tamas-box' )
+			);
+		}
+
+		return 'https://ble.ir/' . rawurlencode( ltrim( $username, '@' ) ) . '?start=tmbadmin_' . self::make_join_code();
+	}
+
+	/**
+	 * Add a Bale chat to the admin list (used by the join link).
+	 *
+	 * @param int|string $chat_id Chat.
+	 * @return bool
+	 */
+	public static function register_admin_chat( $chat_id ) {
+		$chat_id = trim( (string) $chat_id );
+
+		if ( '' === $chat_id ) {
+			return false;
+		}
+
+		$raw = get_option( TMB_OPTION, array() );
+
+		if ( ! is_array( $raw ) ) {
+			$raw = array();
+		}
+		if ( ! isset( $raw['chat'] ) || ! is_array( $raw['chat'] ) ) {
+			$raw['chat'] = array();
+		}
+
+		$current = isset( $raw['chat']['bale_chat_ids'] ) ? (string) $raw['chat']['bale_chat_ids'] : '';
+		$ids     = array();
+
+		foreach ( preg_split( '/[\s,;،]+/', $current ) as $part ) {
+			$part = trim( (string) $part );
+			if ( '' !== $part ) {
+				$ids[] = $part;
+			}
+		}
+
+		if ( in_array( $chat_id, $ids, true ) ) {
+			return true;
+		}
+
+		$ids[]                        = $chat_id;
+		$raw['chat']['bale_chat_ids'] = implode( "\n", array_slice( $ids, 0, 20 ) );
+
+		update_option( TMB_OPTION, $raw );
+
+		// Drop the cached copy so the new id is used right away.
+		TMB_Chat::reset_cfg_cache();
+
+		return true;
 	}
 
 	/**
@@ -923,13 +1155,17 @@ class TMB_Chat_Bale {
 
 		set_transient( $key, 1, 6 * HOUR_IN_SECONDS );
 
-		self::send_text(
-			$chat_id,
-			esc_html__( 'این بازو فقط برای پشتیبانی سایت استفاده می‌شود و پیام شما به کسی ارسال نمی‌شود.', 'tamas-box' )
-				. "\n" . esc_html__( 'برای ارتباط با ما از وب‌سایت استفاده کنید.', 'tamas-box' ),
-			array(),
-			false
-		);
+		$text = esc_html__( 'این بازو فقط برای پشتیبانی سایت استفاده می‌شود و پیام شما به کسی ارسال نمی‌شود.', 'tamas-box' )
+			. "\n" . esc_html__( 'برای ارتباط با ما از وب‌سایت استفاده کنید.', 'tamas-box' );
+
+		/* The owner has not registered any admin chat yet - help them instead. */
+		if ( self::admin_chat_ids() === array() ) {
+			$text = esc_html__( 'هنوز هیچ مدیری برای این بازو ثبت نشده است.', 'tamas-box' )
+				. "\n" . esc_html__( 'اگر شما مدیر سایت هستید، این عدد را در «تماس باکس ← چت آنلاین ← شناسه چت مدیران» وارد کنید:', 'tamas-box' )
+				. "\n<b>chat_id</b>: <code>" . esc_html( (string) $chat_id ) . '</code>';
+		}
+
+		self::send_text( $chat_id, $text, array(), true );
 	}
 
 	/**
@@ -1518,7 +1754,8 @@ class TMB_Chat_Bale {
 	 * @return int Number of processed updates.
 	 */
 	public static function pull_updates( $timeout = 20 ) {
-		if ( ! self::is_ready() ) {
+		// A token is enough: /id must work before any admin chat is registered.
+		if ( ! self::has_token() ) {
 			return 0;
 		}
 

@@ -45,6 +45,9 @@ class TMB_Chat_Admin {
 		add_action( 'wp_ajax_tmb_chat_delete_webhook', array( $this, 'ajax_delete_webhook' ) );
 		add_action( 'wp_ajax_tmb_chat_webhook_info', array( $this, 'ajax_webhook_info' ) );
 		add_action( 'wp_ajax_tmb_chat_poll_now', array( $this, 'ajax_poll_now' ) );
+		add_action( 'wp_ajax_tmb_chat_admin_link', array( $this, 'ajax_admin_link' ) );
+		add_action( 'wp_ajax_tmb_chat_item_first', array( $this, 'ajax_item_first' ) );
+		add_action( 'wp_ajax_tmb_chat_diag', array( $this, 'ajax_diag' ) );
 
 		add_action( 'admin_init', array( $this, 'maybe_clear_notice' ) );
 		add_action( 'admin_notices', array( $this, 'upgrade_notice' ) );
@@ -224,6 +227,20 @@ class TMB_Chat_Admin {
 				</div>
 			</div>
 
+			<?php if ( empty( $c['enabled'] ) ) : ?>
+				<p class="tmb-note tmb-note-warn">
+					<strong><?php esc_html_e( 'ماژول چت خاموش است.', 'tamas-box' ); ?></strong>
+					<?php esc_html_e( 'تا وقتی کلید بالا روشن نشود، دکمه «چت آنلاین» در سایت هیچ کاری نمی‌کند و پنجره چت ساخته نمی‌شود.', 'tamas-box' ); ?>
+				</p>
+			<?php endif; ?>
+
+			<?php if ( empty( $c['bale_chat_ids'] ) ) : ?>
+				<p class="tmb-note tmb-note-warn">
+					<strong><?php esc_html_e( 'شناسه چت مدیران خالی است.', 'tamas-box' ); ?></strong>
+					<?php esc_html_e( 'پیام مشتریان ذخیره می‌شود ولی به هیچ‌کس در بله نمی‌رسد. از دکمه «لینک ثبت مدیر» استفاده کنید یا در بله به بازو /id بفرستید.', 'tamas-box' ); ?>
+				</p>
+			<?php endif; ?>
+
 			<!-- ============ اتصال به بله ============ -->
 			<div class="tmb-card tmb-bale-card">
 				<h3>🔗 <?php esc_html_e( 'اتصال به بله', 'tamas-box' ); ?></h3>
@@ -249,10 +266,27 @@ class TMB_Chat_Admin {
 
 				<div class="tmb-field">
 					<label><?php esc_html_e( 'شناسه چت مدیران (هر خط یک مورد)', 'tamas-box' ); ?></label>
-					<textarea class="ltr tmb-chat-ids" rows="3" name="<?php echo esc_attr( $n ); ?>[bale_chat_ids]" placeholder="-1001234567890&#10;987654321" dir="ltr"><?php echo esc_textarea( $c['bale_chat_ids'] ); ?></textarea>
-					<p class="tmb-desc">
-						<?php esc_html_e( 'برای فهمیدن شناسه چت خود، بعد از ذخیره تنظیمات، در بله به بازوی خود پیام /id بدهید. می‌توانید شناسه یک گروه را هم وارد کنید تا همه مدیران در یک گروه پیام‌ها را ببینند و پاسخ دهند.', 'tamas-box' ); ?>
+					<textarea class="ltr tmb-chat-ids" rows="3" name="<?php echo esc_attr( $n ); ?>[bale_chat_ids]" placeholder="-1001234567890&#10;987654321&#10;@mychannel" dir="ltr"><?php echo esc_textarea( $c['bale_chat_ids'] ); ?></textarea>
+					<p class="tmb-note tmb-note-warn tmb-phone-note">
+						<strong><?php esc_html_e( 'شماره موبایل اینجا کار نمی‌کند!', 'tamas-box' ); ?></strong>
+						<?php esc_html_e( 'بازوی بله فقط با «شناسه چت» (یک عدد مثل 987654321 یا عدد منفی برای گروه/کانال) یا «@نام‌کاربری کانال» می‌تواند پیام بفرستد. با شماره تلفن یا آیدی شخصی امکان‌پذیر نیست — این محدودیت خودِ بله است، نه افزونه.', 'tamas-box' ); ?>
 					</p>
+					<p class="tmb-desc">
+						<strong><?php esc_html_e( 'ساده‌ترین راه:', 'tamas-box' ); ?></strong>
+						<?php esc_html_e( 'دکمه «لینک ثبت مدیر» را بزنید و لینکی که می‌سازد را در بله باز کنید؛ شناسه چت شما خودکار همین‌جا ثبت می‌شود. راه دیگر: در بله به بازوی خود پیام /id بدهید (حتی قبل از ثبت شدن به‌عنوان مدیر هم جواب می‌دهد). برای گروه: بازو را عضو گروه کنید و داخل گروه /id بفرستید.', 'tamas-box' ); ?>
+					</p>
+				</div>
+
+				<div class="tmb-grid-2">
+					<div class="tmb-field">
+						<label><?php esc_html_e( 'نام کاربری بازو (بدون @)', 'tamas-box' ); ?></label>
+						<input type="text" class="ltr" name="<?php echo esc_attr( $n ); ?>[bale_bot_username]" value="<?php echo esc_attr( $c['bale_bot_username'] ); ?>" placeholder="mybot" dir="ltr">
+						<p class="tmb-desc"><?php esc_html_e( 'با «تست اتصال» خودکار پر می‌شود. برای ساخت لینک ثبت مدیر لازم است.', 'tamas-box' ); ?></p>
+					</div>
+					<div class="tmb-field">
+						<label><?php esc_html_e( 'نام نمایشی بازو', 'tamas-box' ); ?></label>
+						<input type="text" name="<?php echo esc_attr( $n ); ?>[bale_bot_name]" value="<?php echo esc_attr( $c['bale_bot_name'] ); ?>" placeholder="<?php esc_attr_e( 'پشتیبانی سایت', 'tamas-box' ); ?>">
+					</div>
 				</div>
 
 				<div class="tmb-chat-actions">
@@ -261,6 +295,9 @@ class TMB_Chat_Admin {
 					<button type="button" class="button" data-tmb-chat="webhook-info">ℹ️ <?php esc_html_e( 'وضعیت وب‌هوک', 'tamas-box' ); ?></button>
 					<button type="button" class="button" data-tmb-chat="delete-webhook">🗑 <?php esc_html_e( 'حذف وب‌هوک', 'tamas-box' ); ?></button>
 					<button type="button" class="button" data-tmb-chat="poll-now">⬇️ <?php esc_html_e( 'دریافت پیام‌های بله (دستی)', 'tamas-box' ); ?></button>
+					<button type="button" class="button button-primary" data-tmb-chat="admin-link">🔗 <?php esc_html_e( 'لینک ثبت مدیر', 'tamas-box' ); ?></button>
+					<button type="button" class="button" data-tmb-chat="item-first">⬆️ <?php esc_html_e( 'انتقال دکمه چت به اول فهرست', 'tamas-box' ); ?></button>
+					<button type="button" class="button" data-tmb-chat="diag">🩺 <?php esc_html_e( 'گزارش عیب‌یابی', 'tamas-box' ); ?></button>
 				</div>
 
 				<div class="tmb-chat-result" data-tmb-chat-result hidden></div>
@@ -364,10 +401,12 @@ class TMB_Chat_Admin {
 				<div class="tmb-helpbox">
 					<strong><?php esc_html_e( 'راه‌اندازی در ۴ قدم', 'tamas-box' ); ?></strong>
 					<ol>
-						<li><?php esc_html_e( 'توکن بازو را وارد کنید و «تست اتصال» را بزنید تا از درستی توکن مطمئن شوید.', 'tamas-box' ); ?></li>
-						<li><?php esc_html_e( 'تنظیمات را ذخیره کنید.', 'tamas-box' ); ?></li>
-						<li><?php esc_html_e( 'در بله به بازوی خود پیام /id بدهید و عددی که می‌فرستد را در «شناسه چت مدیران» بگذارید (برای گروه، بازو را عضو گروه کنید و در گروه /id بفرستید).', 'tamas-box' ); ?></li>
-						<li><?php esc_html_e( 'دکمه «ثبت وب‌هوک» را بزنید. تمام! حالا در سایت چت را باز کنید و یک پیام تستی بفرستید.', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( 'توکن بازو را وارد کنید و «تست اتصال» را بزنید (نام کاربری بازو و آدرس API خودکار ذخیره می‌شود).', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( 'تنظیمات را «ذخیره تغییرات» کنید.', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( '«لینک ثبت مدیر» را بزنید و لینک ساخته‌شده را در بله باز کنید → شناسه چت خودکار ثبت می‌شود. (راه جایگزین: پیام /id به بازو.)', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( '«ثبت وب‌هوک» را بزنید. اگر سایت HTTPS نیست، روش دریافت را روی «دریافت خودکار» بگذارید.', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( 'در سایت دکمه «چت آنلاین» را بزنید و یک پیام تستی بفرستید؛ باید در بله ظاهر شود. پاسخ شما در بله هم داخل چت سایت می‌آید.', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( 'اگر چیزی کار نکرد، «گزارش عیب‌یابی» را بزنید و متن گزارش را برای پشتیبانی بفرستید.', 'tamas-box' ); ?></li>
 					</ol>
 				</div>
 			</div>
@@ -981,7 +1020,7 @@ class TMB_Chat_Admin {
 		}
 
 		$response = wp_remote_post(
-			$bot['base'] . $method,
+			self::bot_endpoint( $bot['base'], $bot['token'], $method ),
 			array(
 				'timeout' => 25,
 				'headers' => array( 'Content-Type' => 'application/json' ),
@@ -1010,6 +1049,20 @@ class TMB_Chat_Admin {
 	}
 
 	/**
+	 * Build a Bale API url: <base><token>/<method>.
+	 *
+	 * The token is part of the path - without it Bale answers "Not Found".
+	 *
+	 * @param string $base   API base, e.g. https://tapi.bale.ai/bot
+	 * @param string $token  Bot token.
+	 * @param string $method Method name.
+	 * @return string
+	 */
+	public static function bot_endpoint( $base, $token, $method ) {
+		return untrailingslashit( (string) $base ) . trim( (string) $token ) . '/' . ltrim( (string) $method, '/' );
+	}
+
+	/**
 	 * Test the token with getMe (tries both API bases when needed).
 	 *
 	 * @return void
@@ -1021,12 +1074,18 @@ class TMB_Chat_Admin {
 		$bases  = array( $bot['base'], 'https://tapi.bale.ai/bot', 'https://tapi.bale.ai/business/bot' );
 		$result = null;
 		$used   = '';
+		$tried  = array();
+
+		if ( '' === $bot['token'] ) {
+			wp_send_json_error( array( 'message' => __( 'ابتدا توکن بازو را وارد کنید (از @botfather در بله).', 'tamas-box' ) ) );
+		}
 
 		foreach ( array_unique( array_filter( $bases ) ) as $base ) {
-			$bot['base'] = untrailingslashit( $base );
+			$base    = untrailingslashit( $base );
+			$tried[] = $base . '****/' . 'getMe';
 
 			$response = wp_remote_post(
-				$bot['base'] . '/getMe',
+				self::bot_endpoint( $base, $bot['token'], 'getMe' ),
 				array(
 					'timeout' => 20,
 					'headers' => array( 'Content-Type' => 'application/json' ),
@@ -1043,18 +1102,52 @@ class TMB_Chat_Admin {
 
 			if ( is_array( $body ) && ! empty( $body['ok'] ) ) {
 				$result = $body;
-				$used   = $bot['base'];
+				$used   = $base;
 				break;
 			}
 
-			$result = new WP_Error( 'tmb_bale_error', is_array( $body ) && isset( $body['description'] ) ? $body['description'] : __( 'پاسخ نامعتبر.', 'tamas-box' ) );
+			$code = is_array( $body ) && isset( $body['error_code'] ) ? (int) $body['error_code'] : (int) wp_remote_retrieve_response_code( $response );
+
+			$result = new WP_Error(
+				'tmb_bale_error',
+				( is_array( $body ) && isset( $body['description'] ) ? $body['description'] : __( 'پاسخ نامعتبر.', 'tamas-box' ) )
+					. ' (HTTP ' . $code . ')'
+			);
 		}
 
 		if ( is_wp_error( $result ) ) {
-			wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+			wp_send_json_error(
+				array(
+					'message' => $result->get_error_message(),
+					'hint'    => __( 'آدرس‌هایی که امتحان شد: ', 'tamas-box' ) . implode( ' , ', $tried )
+						. "\n" . __( 'اگر «Not Found» می‌بینید، توکن اشتباه یا ناقص است؛ قالب درست: 123456789:abcdIuZmK5...', 'tamas-box' ),
+				)
+			);
 		}
 
 		$botinfo = isset( $result['result'] ) ? $result['result'] : array();
+
+		/* Remember the working base + bot identity so the rest of the plugin agrees. */
+		$raw = get_option( TMB_OPTION, array() );
+		if ( is_array( $raw ) ) {
+			if ( ! isset( $raw['chat'] ) || ! is_array( $raw['chat'] ) ) {
+				$raw['chat'] = array();
+			}
+			if ( $used ) {
+				$raw['chat']['bale_api_base'] = $used;
+			}
+			if ( ! empty( $botinfo['username'] ) ) {
+				$raw['chat']['bale_bot_username'] = sanitize_text_field( $botinfo['username'] );
+			}
+			if ( ! empty( $botinfo['first_name'] ) ) {
+				$raw['chat']['bale_bot_name'] = sanitize_text_field( $botinfo['first_name'] );
+			}
+			update_option( TMB_OPTION, $raw );
+			TMB_Chat::reset_cfg_cache();
+		}
+
+		TMB_Chat_DB::set_state( 'bot_username', isset( $botinfo['username'] ) ? $botinfo['username'] : '' );
+		TMB_Chat_DB::set_state( 'bot_name', isset( $botinfo['first_name'] ) ? $botinfo['first_name'] : '' );
 
 		wp_send_json_success(
 			array(
@@ -1067,6 +1160,7 @@ class TMB_Chat_Admin {
 				'base'     => $used,
 				'bot'      => $botinfo,
 				'business' => ( false !== strpos( (string) $used, '/business/' ) ) ? 1 : 0,
+				'hint'     => __( 'آدرس API و نام کاربری بازو در تنظیمات ذخیره شد؛ صفحه را تازه کنید.', 'tamas-box' ),
 			)
 		);
 	}
@@ -1157,6 +1251,194 @@ class TMB_Chat_Admin {
 				'info'    => $info,
 			)
 		);
+	}
+
+	/**
+	 * Deep link that registers whoever opens it as an admin chat.
+	 *
+	 * Bale cannot message a phone number - a bot only knows chat ids - so this
+	 * link removes the need to find the number by hand.
+	 *
+	 * @return void
+	 */
+	public function ajax_admin_link() {
+		$this->guard();
+
+		$url = TMB_Chat_Bale::admin_join_url();
+
+		if ( is_wp_error( $url ) ) {
+			wp_send_json_error(
+				array(
+					'message' => $url->get_error_message(),
+					'hint'    => __( 'ابتدا توکن را وارد کرده و «تست اتصال» را بزنید تا نام کاربری بازو شناخته شود.', 'tamas-box' ),
+				)
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				'message' => __( 'لینک ثبت مدیر (۲۴ ساعت معتبر است):', 'tamas-box' ),
+				'url'     => $url,
+				'hint'    => __( 'این لینک را در بله باز کنید (یا برای همکارتان بفرستید). به‌محض باز شدن، شناسه چت به‌صورت خودکار در تنظیمات ثبت می‌شود و بازو یک پیام تأیید می‌فرستد.', 'tamas-box' ),
+			)
+		);
+	}
+
+	/**
+	 * Move the "چت آنلاین" item to the top of every contact box.
+	 *
+	 * @return void
+	 */
+	public function ajax_item_first() {
+		$this->guard();
+
+		$changed = TMB_Settings::chat_items_first();
+
+		if ( ! $changed ) {
+			wp_send_json_success(
+				array(
+					'message' => __( 'تغییری لازم نبود: یا آیتم چت در هیچ باکسی نیست، یا همین حالا اول فهرست است.', 'tamas-box' ),
+					'hint'    => __( 'برای ساخت آیتم چت، در تب «باکس‌های تماس» روی «+ آیتم چت آنلاین» بزنید. با کشیدن و رها کردن هم می‌توانید ترتیب را عوض کنید.', 'tamas-box' ),
+				)
+			);
+		}
+
+		wp_send_json_success(
+			array(
+				/* translators: %d: number of boxes */
+				'message' => sprintf( __( 'دکمه «چت آنلاین» در %d باکس به اول فهرست منتقل شد.', 'tamas-box' ), (int) $changed ),
+				'hint'    => __( 'این صفحه را تازه کنید تا ترتیب جدید را ببینید.', 'tamas-box' ),
+			)
+		);
+	}
+
+	/**
+	 * Full status report - the fastest way to find out why something is off.
+	 *
+	 * @return void
+	 */
+	public function ajax_diag() {
+		$this->guard();
+
+		$yn = function ( $value ) {
+			return $value ? 'بله ✔' : 'خیر ✖';
+		};
+
+		$c     = TMB_Settings::chat();
+		$s     = TMB_Settings::get();
+		$state = TMB_Chat_DB::state();
+		$error = TMB_Chat_Bale::last_error();
+
+		$L   = array();
+		$L[] = '—— گزارش عیب‌یابی تماس باکس ——';
+		$L[] = 'نسخه افزونه: ' . TMB_VERSION . ' | وردپرس: ' . get_bloginfo( 'version' ) . ' | PHP: ' . PHP_VERSION;
+		$L[] = 'آدرس سایت: ' . home_url() . ( is_ssl() ? ' (HTTPS ✔)' : ' (HTTP ✖ — بله فقط وب‌هوک HTTPS را قبول می‌کند)' );
+		$L[] = 'زمان سرور: ' . wp_date( 'Y-m-d H:i:s' ) . ' | timezone: ' . wp_timezone_string();
+		$L[] = '';
+		$L[] = '[ماژول چت]';
+		$L[] = 'افزونه فعال: ' . $yn( ! empty( $s['enabled'] ) );
+		$L[] = 'چت آنلاین فعال: ' . $yn( ! empty( $c['enabled'] ) ) . '  ← اگر «خیر» است، دکمه چت در سایت کار نمی‌کند';
+		$L[] = 'TMB_Chat::enabled(): ' . $yn( TMB_Chat::enabled() );
+		$L[] = 'حالت دکمه: ' . $c['launcher'] . ' (item = فقط داخل باکس تماس)';
+		$L[] = 'فقط کاربران واردشده: ' . $yn( ! empty( $c['require_login'] ) );
+		$L[] = 'ساعات پاسخگویی: ' . ( empty( $c['hours_enabled'] )
+			? 'خاموش (همیشه آنلاین)'
+			: trim( $c['hours_from'] ) . '–' . trim( $c['hours_to'] ) . ' روزها: ' . ( (array) $c['hours_days'] ? implode( ',', (array) $c['hours_days'] ) : 'همه' ) );
+		$L[] = 'همین حالا آنلاین؟ ' . $yn( TMB_Chat::is_online() );
+		$L[] = 'بازه‌ی بررسی پیام (ثانیه): ' . $c['poll_interval'] . ' / حالت بسته: ' . $c['poll_closed'];
+		$L[] = '';
+		$L[] = '[باکس‌ها و آیتم چت]';
+
+		$chat_items = 0;
+		foreach ( (array) $s['boxes'] as $box ) {
+			$found = 0;
+			$total = 0;
+			foreach ( (array) ( isset( $box['items'] ) ? $box['items'] : array() ) as $item ) {
+				$total++;
+				if ( is_array( $item ) && isset( $item['action'] ) && 'chat' === $item['action'] && ! empty( $item['enabled'] ) ) {
+					$found++;
+				}
+			}
+			$chat_items += $found;
+			$L[] = sprintf(
+				'باکس %s (%s): فعال=%s | %d آیتم | %d آیتم چت',
+				isset( $box['id'] ) ? $box['id'] : '?',
+				isset( $box['name'] ) ? $box['name'] : '?',
+				! empty( $box['enabled'] ) ? 'بله' : 'خیر',
+				$total,
+				$found
+			);
+		}
+		$L[] = 'boxes_need_chat(): ' . $yn( TMB_Chat::boxes_need_chat() );
+		$L[] = 'مجموع آیتم‌های چت: ' . $chat_items . ( $chat_items ? '' : '  ← هیچ دکمه چتی در سایت نیست!' );
+		$L[] = '';
+		$L[] = '[بله]';
+		$L[] = 'ارسال به بله فعال: ' . $yn( ! empty( $c['bale_enabled'] ) );
+		$L[] = 'توکن: ' . ( '' !== trim( (string) $c['bale_token'] )
+			? substr( (string) $c['bale_token'], 0, 9 ) . '…(' . strlen( (string) $c['bale_token'] ) . ' کاراکتر)'
+			: 'خالی ✖' );
+		$L[] = 'آدرس API: ' . $c['bale_api_base'];
+		$L[] = 'نمونه فراخوانی: ' . str_replace( (string) $c['bale_token'], '****', TMB_Chat_Bale::endpoint( '/getMe' ) );
+		$L[] = 'شناسه چت مدیران: ' . ( '' !== trim( (string) $c['bale_chat_ids'] ) ? str_replace( array( "
+", "
+" ), ' , ', (string) $c['bale_chat_ids'] ) : 'خالی ✖ ← پیام مشتریان به هیچ‌کس نمی‌رسد' );
+		$L[] = 'نام کاربری بازو: ' . ( $c['bale_bot_username'] ? '@' . $c['bale_bot_username'] : 'ناشناخته' );
+		$L[] = 'is_ready(): ' . $yn( TMB_Chat_Bale::is_ready() );
+		$L[] = 'روش دریافت پاسخ: ' . $c['bale_mode'];
+		$L[] = 'آدرس وب‌هوک: ' . TMB_Chat_Bale::webhook_url();
+		$L[] = 'آخرین وب‌هوک دریافتی: ' . ( ! empty( $state['last_webhook'] ) ? wp_date( 'Y-m-d H:i:s', (int) $state['last_webhook'] ) : 'هیچ ✖' );
+		$L[] = 'آخرین getUpdates: ' . ( ! empty( $state['last_poll'] ) ? wp_date( 'Y-m-d H:i:s', (int) $state['last_poll'] ) : 'هیچ' );
+		$L[] = 'update_offset: ' . ( isset( $state['update_offset'] ) ? (int) $state['update_offset'] : 0 ) . ' | last_update_id: ' . ( isset( $state['last_update_id'] ) ? (int) $state['last_update_id'] : 0 );
+		$L[] = 'آخرین خطای بله: ' . ( ! empty( $error['message'] )
+			? $error['message'] . ( ! empty( $error['time'] ) ? ' (' . wp_date( 'Y-m-d H:i', (int) $error['time'] ) . ')' : '' )
+			: 'ندارد' );
+		$L[] = '';
+		$L[] = '[دیتابیس و کرون]';
+		$L[] = 'جدول‌ها ساخته شده: ' . $yn( TMB_Chat_DB::tables_exist() );
+		$L[] = 'db_version: ' . ( isset( $state['db_version'] ) ? $state['db_version'] : '-' );
+
+		$counters = TMB_Chat_DB::counters();
+		$L[]      = 'گفتگوی باز: ' . (int) $counters['open'] . ' | بی‌پاسخ: ' . (int) $counters['unread'];
+
+		$next = wp_next_scheduled( TMB_Chat::CRON_HOOK );
+		$L[]  = 'کرون (tmb_chat_cron): ' . ( $next ? 'زمان‌بندی شده، اجرای بعدی ' . wp_date( 'Y-m-d H:i:s', (int) $next ) : 'زمان‌بندی نشده ✖' );
+		$L[]  = 'WP_CRON_LOCK / DISABLE_WP_CRON: ' . ( defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ? 'غیرفعال ✖' : 'فعال' );
+		$L[]  = '';
+		$L[]  = '[فایل‌ها و REST]';
+		$L[]  = 'chat.css موجود: ' . $yn( file_exists( TMB_PATH . 'assets/css/chat.css' ) ) . ' | chat.js موجود: ' . $yn( file_exists( TMB_PATH . 'assets/js/chat.js' ) );
+		$L[]  = 'TMB_URL: ' . TMB_URL;
+
+		$routes = rest_get_server()->get_routes();
+		$L[]    = 'مسیر REST /tmb/v1/chat/session: ' . $yn( isset( $routes['/tmb/v1/chat/session'] ) );
+		$L[]    = 'rest_url(): ' . rest_url( 'tmb/v1/chat/session' );
+		$L[]    = '';
+		$L[]    = '[تست زنده API بله]';
+
+		$me = TMB_Chat_Bale::get_me();
+		if ( is_wp_error( $me ) ) {
+			$L[] = 'getMe: ✖ ' . $me->get_error_message();
+		} else {
+			$bot = isset( $me['result'] ) ? $me['result'] : array();
+			$L[] = 'getMe: ✔ ' . ( isset( $bot['first_name'] ) ? $bot['first_name'] : '?' ) . ' (@' . ( isset( $bot['username'] ) ? $bot['username'] : '?' ) . ') id=' . ( isset( $bot['id'] ) ? $bot['id'] : '?' );
+		}
+
+		$info = TMB_Chat_Bale::webhook_info();
+		if ( is_wp_error( $info ) ) {
+			$L[] = 'getWebhookInfo: ✖ ' . $info->get_error_message();
+		} else {
+			$r    = isset( $info['result'] ) ? $info['result'] : array();
+			$L[]  = 'getWebhookInfo: url=' . ( ! empty( $r['url'] ) ? $r['url'] : '(خالی = وب‌هوک ثبت نشده)' );
+			$L[]  = '  pending=' . ( isset( $r['pending_update_count'] ) ? (int) $r['pending_update_count'] : 0 )
+				. ( ! empty( $r['last_error_message'] ) ? ' | last_error=' . $r['last_error_message'] : '' );
+		}
+
+		$pull = TMB_Chat_Bale::pull_updates( 3 );
+		$L[]  = 'pull_updates (تست دستی): ' . (int) $pull . ' پیام پردازش شد';
+		$L[]  = '';
+		$L[]  = '—— پایان گزارش ——';
+
+		wp_send_json_success( array( 'message' => implode( "
+", $L ) ) );
 	}
 
 	/**

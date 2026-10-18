@@ -457,18 +457,22 @@ class TMB_Settings {
 				continue;
 			}
 
-			$items[] = array(
-				'enabled'      => 1,
-				'action'       => 'chat',
-				'label'        => __( 'چت آنلاین', 'tamas-box' ),
-				'sublabel'     => __( 'پاسخگویی آنی', 'tamas-box' ),
-				'icon'         => 'chat',
-				'url'          => '#tmb-chat',
-				'color'        => '#c99a5b',
-				'custom_color' => 0,
-				'new_tab'      => 0,
-				'nofollow'     => 0,
-				'device'       => 'both',
+			// First position: the online chat is the item people should see first.
+			array_unshift(
+				$items,
+				array(
+					'enabled'      => 1,
+					'action'       => 'chat',
+					'label'        => __( 'چت آنلاین', 'tamas-box' ),
+					'sublabel'     => __( 'پاسخگویی آنی', 'tamas-box' ),
+					'icon'         => 'chat',
+					'url'          => '#tmb-chat',
+					'color'        => '#c99a5b',
+					'custom_color' => 0,
+					'new_tab'      => 0,
+					'nofollow'     => 0,
+					'device'       => 'both',
+				)
 			);
 
 			$box['items']            = $items;
@@ -492,6 +496,58 @@ class TMB_Settings {
 		}
 
 		update_option( 'tmb_version', TMB_VERSION );
+	}
+
+	/**
+	 * Move every "chat" item to the top of its box.
+	 *
+	 * @return int Number of boxes that changed.
+	 */
+	public static function chat_items_first() {
+		$raw = get_option( TMB_OPTION, array() );
+
+		if ( ! is_array( $raw ) || empty( $raw['boxes'] ) || ! is_array( $raw['boxes'] ) ) {
+			return 0;
+		}
+
+		$changed = 0;
+
+		foreach ( $raw['boxes'] as $index => $box ) {
+			if ( ! is_array( $box ) || empty( $box['items'] ) || ! is_array( $box['items'] ) ) {
+				continue;
+			}
+
+			$first = array();
+			$rest  = array();
+
+			foreach ( $box['items'] as $item ) {
+				if ( is_array( $item ) && isset( $item['action'] ) && 'chat' === $item['action'] ) {
+					$first[] = $item;
+				} else {
+					$rest[] = $item;
+				}
+			}
+
+			if ( ! $first || ! $rest ) {
+				continue;
+			}
+
+			$ordered = array_merge( $first, $rest );
+
+			if ( $ordered === array_values( $box['items'] ) ) {
+				continue;
+			}
+
+			$box['items']         = $ordered;
+			$raw['boxes'][ $index ] = $box;
+			$changed++;
+		}
+
+		if ( $changed ) {
+			update_option( TMB_OPTION, $raw );
+		}
+
+		return $changed;
 	}
 
 	/**
@@ -615,9 +671,18 @@ class TMB_Settings {
 		foreach ( array(
 			'launcher_text', 'title', 'subtitle', 'placeholder', 'send_label', 'agent_label',
 			'visitor_label', 'online_text', 'offline_text', 'prechat_title', 'prechat_name_label',
-			'prechat_phone_label', 'prechat_button', 'bale_bot_username', 'bale_bot_name',
+			'prechat_phone_label', 'prechat_button',
 		) as $key ) {
 			$out[ $key ] = isset( $raw[ $key ] ) ? sanitize_text_field( wp_unslash( $raw[ $key ] ) ) : $d[ $key ];
+		}
+
+		/*
+		 * The bot identity is filled in automatically by "تست اتصال". An empty
+		 * form field must not erase what we already know.
+		 */
+		foreach ( array( 'bale_bot_username', 'bale_bot_name' ) as $key ) {
+			$value       = isset( $raw[ $key ] ) ? sanitize_text_field( wp_unslash( $raw[ $key ] ) ) : '';
+			$out[ $key ] = ( '' !== trim( $value ) ) ? trim( $value ) : $old[ $key ];
 		}
 
 		/* multi line texts */

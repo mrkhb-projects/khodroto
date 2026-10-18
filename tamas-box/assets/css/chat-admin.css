@@ -102,6 +102,25 @@
 
 #tab-chat .tmb-preset-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
 
+/* long diagnostics report */
+#tab-chat .tmb-chat-result.is-diag { max-height: 460px; overflow: auto; }
+#tab-chat .tmb-chat-result.is-diag pre {
+	font-family: Consolas, Monaco, "Courier New", monospace;
+	font-size: 12px;
+	line-height: 2;
+	direction: rtl;
+	text-align: right;
+}
+
+/* the "register me as an admin" deep link */
+#tab-chat .tmb-joinlink { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; flex-wrap: wrap; }
+#tab-chat .tmb-joinlink input { flex: 1 1 320px; direction: ltr; text-align: left; font-family: Consolas, Monaco, monospace; }
+
+/* a phone number typed into the chat id list */
+#tab-chat textarea.tmb-field-error { border-color: #ef4444 !important; background: #fef2f2; }
+#tab-chat .tmb-note-strong { border-inline-start-width: 5px; box-shadow: 0 0 0 2px rgba(239, 68, 68, .18); font-weight: 700; }
+#tab-chat .tmb-phone-note { margin-top: 8px; }
+
 /* the "chat" item inside a contact box */
 .tmb-item.tmb-item-is-chat { border-inline-start: 3px solid #c99a5b; }
 .tmb-item-chat-note .tmb-note { margin: 0; }

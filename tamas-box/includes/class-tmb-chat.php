@@ -76,6 +76,16 @@ class TMB_Chat {
 	}
 
 	/**
+	 * Forget the cached chat settings (after they were changed in code,
+	 * for example when the Bale join link registers a new admin chat).
+	 *
+	 * @return void
+	 */
+	public static function reset_cfg_cache() {
+		self::$cfg = null;
+	}
+
+	/**
 	 * Is the chat module switched on?
 	 *
 	 * @return bool
@@ -177,11 +187,15 @@ class TMB_Chat {
 			return false;
 		}
 
-		if ( in_array( $c['launcher'], array( 'button', 'both' ), true ) ) {
-			return true;
-		}
-
-		return self::boxes_need_chat();
+		/*
+		 * The widget is printed on every front end page while the module is on.
+		 * Gating it on "does a visible box contain a chat item" looked clever
+		 * but produced dead buttons: a box placed with the [tamas_box]
+		 * shortcode (or by a filter) shows the item while the widget itself
+		 * was never printed. Chat items, the launcher and TamasBoxChat.open()
+		 * now always have a window to open.
+		 */
+		return TMB_Visibility::is_active( TMB_Settings::get() );
 	}
 
 	/**
@@ -1255,7 +1269,7 @@ class TMB_Chat {
 		$session = $token ? TMB_Chat_DB::get_session_by_token( $token ) : null;
 
 		// Polling mode: use this request as a cheap trigger for getUpdates.
-		if ( 'poll' === $c['bale_mode'] && TMB_Chat_Bale::is_ready() && ! get_transient( 'tmb_chat_pulled' ) ) {
+		if ( 'poll' === $c['bale_mode'] && TMB_Chat_Bale::has_token() && ! get_transient( 'tmb_chat_pulled' ) ) {
 			set_transient( 'tmb_chat_pulled', 1, 20 );
 			TMB_Chat_Bale::pull_updates( 5 );
 		}
@@ -1714,8 +1728,21 @@ class TMB_Chat {
 
 		$c = self::cfg();
 
-		if ( 'poll' === $c['bale_mode'] && TMB_Chat_Bale::is_ready() ) {
+		if ( 'poll' === $c['bale_mode'] && TMB_Chat_Bale::has_token() ) {
 			TMB_Chat_Bale::pull_updates( 20 );
+		} elseif ( 'webhook' === $c['bale_mode'] && TMB_Chat_Bale::has_token() && ! (int) TMB_Chat_DB::get_state( 'last_webhook', 0 ) ) {
+			/*
+			 * Webhook mode, but nothing ever arrived. Either the webhook was
+			 * never registered or the host cannot receive it - fall back to
+			 * getUpdates so the bot is never deaf. Duplicate updates are
+			 * dropped by the update_id check in handle_update().
+			 */
+			$info = TMB_Chat_Bale::webhook_info();
+			$url  = ( ! is_wp_error( $info ) && isset( $info['result']['url'] ) ) ? (string) $info['result']['url'] : '';
+
+			if ( '' === trim( $url ) ) {
+				TMB_Chat_Bale::pull_updates( 10 );
+			}
 		}
 
 		$last_prune = (int) TMB_Chat_DB::get_state( 'last_prune', 0 );

@@ -194,10 +194,21 @@ class TMB_Frontend {
 	 * @return string
 	 */
 	protected function item_html( $item, $box ) {
-		$action  = ( isset( $item['action'] ) && 'chat' === $item['action'] ) ? 'chat' : 'link';
-		$is_chat = ( 'chat' === $action && class_exists( 'TMB_Chat' ) && TMB_Chat::enabled() );
+		$action = ( isset( $item['action'] ) && 'chat' === $item['action'] ) ? 'chat' : 'link';
 
-		if ( empty( $item['enabled'] ) || ( '' === $item['url'] && ! $is_chat ) ) {
+		/*
+		 * A chat item is only clickable when the chat window is really printed
+		 * on this page (module on, visitor allowed to chat). Otherwise the item
+		 * is skipped completely - a button that does nothing is worse than no
+		 * button at all.
+		 */
+		$is_chat = ( 'chat' === $action && class_exists( 'TMB_Chat' ) && tmb_chat()->should_render() );
+
+		if ( empty( $item['enabled'] ) || ( 'chat' === $action && ! $is_chat ) ) {
+			return '';
+		}
+
+		if ( '' === $item['url'] && ! $is_chat ) {
 			return '';
 		}
 

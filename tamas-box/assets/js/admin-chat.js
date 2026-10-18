@@ -259,6 +259,18 @@
 					action = 'tmb_chat_poll_now';
 					label  = 'در حال دریافت پیام‌ها از بله…';
 					break;
+				case 'admin-link':
+					action = 'tmb_chat_admin_link';
+					label  = 'در حال ساخت لینک ثبت مدیر…';
+					break;
+				case 'item-first':
+					action = 'tmb_chat_item_first';
+					label  = 'در حال انتقال دکمه چت به اول فهرست…';
+					break;
+				case 'diag':
+					action = 'tmb_chat_diag';
+					label  = 'در حال تهیه گزارش عیب‌یابی… (چند ثانیه)';
+					break;
 				default:
 					return;
 			}
@@ -280,14 +292,32 @@
 						if ( res.data && res.data.hint ) {
 							note = '<p class="tmb-note">' + esc( res.data.hint ) + '</p>';
 						}
-						if ( res.data && res.data.base && 'test' === what ) {
-							note += '<p class="tmb-note">آدرس API قابل استفاده: <code>' + esc( res.data.base ) + '</code></p>';
+						if ( 'test' === what && res.data ) {
+							if ( res.data.base ) {
+								$tab.find( '.tmb-chat-base' ).val( res.data.base );
+								note += '<p class="tmb-note">آدرس API قابل استفاده: <code>' + esc( res.data.base ) + '</code></p>';
+							}
+
+							if ( res.data.bot ) {
+								if ( res.data.bot.username ) {
+									$tab.find( 'input[name*="[bale_bot_username]"]' ).val( res.data.bot.username );
+								}
+								if ( res.data.bot.first_name ) {
+									$tab.find( 'input[name*="[bale_bot_name]"]' ).val( res.data.bot.first_name );
+								}
+							}
 						}
 						if ( res.data && 0 === res.data.match && 'webhook-info' === what ) {
 							note += '<p class="tmb-note tmb-note-warn">آدرس ثبت‌شده با آدرس افزونه یکی نیست؛ «ثبت وب‌هوک» را بزنید.</p>';
 						}
 
-						showResult( msg, 'ok', note );
+						if ( res.data && res.data.url && 'admin-link' === what ) {
+							note += '<p class="tmb-joinlink"><input type="text" class="ltr" readonly value="' + esc( res.data.url ) +
+								'" onclick="this.select()" dir="ltr">' +
+								'<a class="button button-primary" href="' + esc( res.data.url ) + '" target="_blank" rel="noopener">باز کردن در بله</a></p>';
+						}
+
+						showResult( msg, 'diag' === what ? 'info is-diag' : 'ok', note );
 					} else {
 						var err = ( res && res.data && res.data.message ) ? res.data.message : ( I.error || 'خطا' );
 						var hint = ( res && res.data && res.data.hint ) ? '<p class="tmb-note">' + esc( res.data.hint ) + '</p>' : '';
@@ -409,6 +439,36 @@
 				$item.find( '.tmb-item-sub' ).val( 'پاسخگویی آنلاین' ).trigger( 'change' );
 			}, 60 );
 		} );
+
+		/* a phone number is not a chat id - say so while they type */
+		function checkIds() {
+			var $ids = $tab.find( '.tmb-chat-ids' );
+
+			if ( ! $ids.length ) {
+				return;
+			}
+
+			var lines = String( $ids.val() || '' ).split( /[\r\n,;،]+/ );
+			var phone = false;
+
+			for ( var i = 0; i < lines.length; i++ ) {
+				var v = $.trim( lines[ i ] ).replace( /[\s\-()]/g, '' );
+
+				if ( ! v ) {
+					continue;
+				}
+
+				if ( /^(\+?98|0)?9\d{9}$/.test( v ) || /^\+?\d{10,13}$/.test( v ) ) {
+					phone = true;
+				}
+			}
+
+			$ids.toggleClass( 'tmb-field-error', phone );
+			$tab.find( '.tmb-phone-note' ).toggleClass( 'tmb-note-strong', phone );
+		}
+
+		$tab.on( 'input change', '.tmb-chat-ids', checkIds );
+		checkIds();
 
 		/* existing items on load */
 		$( '#tmb-boxes .tmb-item' ).each( function () {
