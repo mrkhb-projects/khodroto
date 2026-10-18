@@ -1618,6 +1618,14 @@ class TMB_Chat {
 
 		TMB_Chat_DB::set_state( 'webhook_hits', (int) TMB_Chat_DB::get_state( 'webhook_hits', 0 ) + 1 );
 
+		/*
+		 * Keep the raw body of the newest calls. The WordPress JSON parser
+		 * caches the body, so reading it here is free and it is the only way
+		 * to see what Bale really sent when every other check looks fine.
+		 */
+		$raw = (string) $request->get_body();
+		TMB_Chat_Bale::log_raw( $raw, 'webhook' );
+
 		if ( empty( $c['bale_enabled'] ) || '' === (string) $c['bale_secret'] ) {
 			TMB_Chat_Bale::trace( 'webhook-rejected: bale off or no secret' );
 			return $this->error( 'tmb_webhook_off', __( 'وب‌هوک غیرفعال است.', 'tamas-box' ), 403 );
@@ -1641,8 +1649,7 @@ class TMB_Chat {
 		$update = $request->get_json_params();
 
 		if ( empty( $update ) || ! is_array( $update ) ) {
-			$raw = file_get_contents( 'php://input' ); // phpcs:ignore WordPress.WP.AlternativeFunctions
-			$update = json_decode( (string) $raw, true );
+			$update = json_decode( $raw, true );
 		}
 
 		if ( ! is_array( $update ) ) {
@@ -2032,19 +2039,8 @@ class TMB_Chat {
 
 		if ( 'poll' === $c['bale_mode'] && TMB_Chat_Bale::has_token() ) {
 			TMB_Chat_Bale::pull_updates( 20 );
-		} elseif ( 'webhook' === $c['bale_mode'] && TMB_Chat_Bale::has_token() && ! (int) TMB_Chat_DB::get_state( 'last_webhook', 0 ) ) {
-			/*
-			 * Webhook mode, but nothing ever arrived. Either the webhook was
-			 * never registered or the host cannot receive it - fall back to
-			 * getUpdates so the bot is never deaf. Duplicate updates are
-			 * dropped by the update_id check in handle_update().
-			 */
-			$info = TMB_Chat_Bale::webhook_info();
-			$url  = ( ! is_wp_error( $info ) && isset( $info['result']['url'] ) ) ? (string) $info['result']['url'] : '';
-
-			if ( '' === trim( $url ) ) {
-				TMB_Chat_Bale::pull_updates( 10 );
-			}
+		} elseif ( 'webhook' === $c['bale_mode'] && TMB_Chat_Bale::has_token() ) {
+			$this->rescue_pending_updates();
 		}
 
 		$last_prune = (int) TMB_Chat_DB::get_state( 'last_prune', 0 );
@@ -2054,6 +2050,72 @@ class TMB_Chat {
 			TMB_Chat_DB::prune_map( 30 );
 			TMB_Chat_DB::set_state( 'last_prune', time() );
 		}
+	}
+
+	/**
+	 * Webhook-mode safety net.
+	 *
+	 * getWebhookInfo tells us how many updates Bale still has queued for us. A
+	 * queue that is not empty while our last webhook hit is old means Bale
+	 * cannot reach the site (or something eats the answers): the updates are
+	 * then read with getUpdates instead, so no reply is ever lost. Runs at most
+	 * every 3 minutes and actually drains at most every 10 minutes.
+	 *
+	 * @return void
+	 */
+	protected function rescue_pending_updates() {
+		if ( (int) TMB_Chat_DB::get_state( 'last_pending_check', 0 ) > time() - 180 ) {
+			return;
+		}
+
+		TMB_Chat_DB::set_state( 'last_pending_check', time() );
+
+		$info = TMB_Chat_Bale::webhook_info();
+
+		if ( is_wp_error( $info ) ) {
+			return;
+		}
+
+		$r       = ( isset( $info['result'] ) && is_array( $info['result'] ) ) ? $info['result'] : array();
+		$pending = isset( $r['pending_update_count'] ) ? (int) $r['pending_update_count'] : 0;
+		$url     = isset( $r['url'] ) ? trim( (string) $r['url'] ) : '';
+		$last    = (int) TMB_Chat_DB::get_state( 'last_webhook', 0 );
+
+		TMB_Chat_DB::set_state( 'pending_updates', $pending );
+
+		if ( ! empty( $r['last_error_message'] ) ) {
+			TMB_Chat_DB::set_state( 'webhook_error', substr( (string) $r['last_error_message'], 0, 200 ) );
+		}
+
+		/* No webhook registered at all: put it back before doing anything else. */
+		if ( '' === $url ) {
+			$set = TMB_Chat_Bale::set_webhook();
+
+			if ( ! is_wp_error( $set ) ) {
+				TMB_Chat_DB::set_state( 'webhook_error', '' );
+				return;
+			}
+
+			TMB_Chat_DB::set_state( 'webhook_error', 'setWebhook: ' . substr( $set->get_error_message(), 0, 160 ) );
+		}
+
+		/* Nothing queued and the webhook is registered - all good. */
+		if ( '' !== $url && $pending < 1 ) {
+			return;
+		}
+
+		/* Bale is delivering normally; it retries failed calls on its own. */
+		if ( '' !== $url && $last > time() - 180 ) {
+			return;
+		}
+
+		if ( (int) TMB_Chat_DB::get_state( 'last_auto_drain', 0 ) > time() - 600 ) {
+			return;
+		}
+
+		TMB_Chat_DB::set_state( 'last_auto_drain', time() );
+		TMB_Chat_Bale::drain_updates( 100 );
+		TMB_Chat_DB::set_state( 'pending_updates', 0 );
 	}
 
 	/**

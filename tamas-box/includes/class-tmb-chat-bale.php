@@ -1109,7 +1109,62 @@ class TMB_Chat_Bale {
 	}
 
 	/**
-	 * Append one line to the inbound trace (newest first, max 8 entries).
+	 * Keep the raw body of the newest webhook calls.
+	 *
+	 * This is the last resort when nothing else explains a drop: if the
+	 * payload is not what the code expects (a wrapper object, a string chat
+	 * id, a different key) the raw text shows it.
+	 *
+	 * @param string $raw    Request body.
+	 * @param string $source webhook|drain.
+	 * @return void
+	 */
+	public static function log_raw( $raw, $source = 'webhook' ) {
+		$raw = trim( (string) $raw );
+
+		if ( '' === $raw ) {
+			return;
+		}
+
+		$list = (array) TMB_Chat_DB::get_state( 'raw_inbox', array() );
+		$body = $raw;
+
+		if ( strlen( $body ) > 1200 ) {
+			$body = substr( $body, 0, 1200 ) . '…';
+		}
+
+		array_unshift(
+			$list,
+			array(
+				'time'   => time(),
+				'source' => (string) $source,
+				'bytes'  => strlen( $raw ),
+				'body'   => $body,
+			)
+		);
+
+		TMB_Chat_DB::set_state( 'raw_inbox', array_slice( $list, 0, 3 ) );
+	}
+
+	/**
+	 * Short single-line preview of a message, for the plain-text report.
+	 *
+	 * @param string $text  Text.
+	 * @param int    $limit Characters.
+	 * @return string
+	 */
+	public static function preview( $text, $limit = 40 ) {
+		$text = trim( preg_replace( '/\s+/u', ' ', (string) $text ) );
+
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $text, 0, (int) $limit, 'UTF-8' );
+		}
+
+		return substr( $text, 0, (int) $limit );
+	}
+
+	/**
+	 * Append one line to the inbound trace (newest first, max 12 entries).
 	 *
 	 * @param string $action What happened.
 	 * @param array  $extra  Details.
@@ -1121,7 +1176,7 @@ class TMB_Chat_Bale {
 
 		array_unshift( $log, $entry );
 
-		TMB_Chat_DB::set_state( 'inbound_log', array_slice( $log, 0, 8 ) );
+		TMB_Chat_DB::set_state( 'inbound_log', array_slice( $log, 0, 12 ) );
 	}
 
 	/**
@@ -2020,5 +2075,128 @@ class TMB_Chat_Bale {
 		TMB_Chat_DB::set_state( 'last_poll', time() );
 
 		return $processed;
+	}
+
+	/**
+	 * Read the updates Bale could not deliver (webhook mode) and store them.
+	 *
+	 * Bale refuses getUpdates while a webhook is registered (error 409), so the
+	 * webhook is removed for a moment, the queue is read, and the webhook is put
+	 * back. Updates that arrive during those seconds wait in Bale's queue - they
+	 * are not lost.
+	 *
+	 * offset 0 is used on purpose: the stored update_offset may come from a
+	 * polling era and can sit above the ids currently queued, which would skip
+	 * exactly the messages we are trying to rescue.
+	 *
+	 * @param int $limit Max updates to read (1-100).
+	 * @return array {processed:int,fetched:int,restored:bool,error:string,stage:string}
+	 */
+	public static function drain_updates( $limit = 100 ) {
+		$out = array(
+			'processed' => 0,
+			'fetched'   => 0,
+			'restored'  => false,
+			'error'     => '',
+			'stage'     => '',
+		);
+
+		if ( ! self::has_token() ) {
+			$out['error'] = 'token is empty';
+			$out['stage'] = 'config';
+			return $out;
+		}
+
+		if ( get_transient( 'tmb_chat_drain_lock' ) ) {
+			$out['error'] = 'drain already running';
+			$out['stage'] = 'lock';
+			return $out;
+		}
+
+		set_transient( 'tmb_chat_drain_lock', 1, 90 );
+
+		$limit = max( 1, min( 100, (int) $limit ) );
+		$url   = self::webhook_url();
+
+		$deleted = self::delete_webhook();
+
+		if ( is_wp_error( $deleted ) ) {
+			delete_transient( 'tmb_chat_drain_lock' );
+			$out['error'] = $deleted->get_error_message();
+			$out['stage'] = 'deleteWebhook';
+			self::trace( 'drain:delete-failed', array( 'error' => substr( $out['error'], 0, 120 ) ) );
+			return $out;
+		}
+
+		/* Give Bale a moment to really drop the webhook before polling. */
+		usleep( 400000 );
+
+		$result = self::get_updates( 0, $limit, 0 );
+
+		/* 409 = the webhook is still registered; one short retry. */
+		if ( is_wp_error( $result ) ) {
+			$msg = $result->get_error_message();
+			if ( false !== strpos( $msg, '409' ) || false !== stripos( $msg, 'webhook' ) ) {
+				sleep( 1 );
+				$result = self::get_updates( 0, $limit, 0 );
+			}
+		}
+
+		if ( is_wp_error( $result ) ) {
+			$out['error'] = $result->get_error_message();
+			$out['stage'] = 'getUpdates';
+		} elseif ( empty( $result['result'] ) || ! is_array( $result['result'] ) ) {
+			$out['fetched'] = 0;
+		} else {
+			$updates        = array_slice( (array) $result['result'], 0, $limit );
+			$out['fetched'] = count( $updates );
+			$max_id         = 0;
+
+			foreach ( $updates as $update ) {
+				if ( ! is_array( $update ) ) {
+					continue;
+				}
+
+				self::log_raw( wp_json_encode( $update ), 'drain' );
+				self::handle_update( $update );
+				$out['processed']++;
+
+				if ( ! empty( $update['update_id'] ) ) {
+					$max_id = max( $max_id, (int) $update['update_id'] );
+				}
+			}
+
+			if ( $max_id ) {
+				/* A second call with offset = last + 1 confirms the batch. */
+				self::get_updates( $max_id + 1, 1, 0 );
+				TMB_Chat_DB::set_state( 'update_offset', $max_id + 1 );
+			}
+
+			TMB_Chat_DB::set_state( 'last_poll', time() );
+		}
+
+		$set = self::set_webhook( $url );
+
+		if ( is_wp_error( $set ) ) {
+			$out['error'] = $set->get_error_message();
+			$out['stage'] = 'setWebhook';
+			TMB_Chat_DB::set_state( 'webhook_error', 'setWebhook after drain: ' . substr( $out['error'], 0, 160 ) );
+		} else {
+			$out['restored'] = true;
+			TMB_Chat_DB::set_state( 'webhook_error', '' );
+		}
+
+		delete_transient( 'tmb_chat_drain_lock' );
+
+		self::trace(
+			$out['restored'] ? 'drain' : 'drain:webhook-not-restored',
+			array(
+				'fetched'   => (int) $out['fetched'],
+				'processed' => (int) $out['processed'],
+				'error'     => '' !== $out['error'] ? substr( $out['error'], 0, 120 ) : '',
+			)
+		);
+
+		return $out;
 	}
 }

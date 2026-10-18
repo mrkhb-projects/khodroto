@@ -432,6 +432,7 @@ class TMB_Chat_Admin {
 						<li><?php esc_html_e( '«لینک ثبت مدیر» را بزنید و لینک ساخته‌شده را در بله باز کنید → شناسه چت خودکار ثبت می‌شود. (راه جایگزین: پیام /id به بازو.)', 'tamas-box' ); ?></li>
 						<li><?php esc_html_e( '«ثبت وب‌هوک» را بزنید. اگر سایت HTTPS نیست، روش دریافت را روی «دریافت خودکار» بگذارید.', 'tamas-box' ); ?></li>
 						<li><?php esc_html_e( 'در سایت دکمه «چت آنلاین» را بزنید و یک پیام تستی بفرستید؛ باید در بله ظاهر شود. پاسخ شما در بله هم داخل چت سایت می‌آید.', 'tamas-box' ); ?></li>
+						<li><?php esc_html_e( 'اگر در گزارش عیب‌یابی، «pending در بله» بزرگ‌تر از صفر بود یا پاسخی در سایت نیامد، «دریافت پیام‌های بله (دستی)» را بزنید؛ صف بله خوانده و پردازش می‌شود.', 'tamas-box' ); ?></li>
 						<li><?php esc_html_e( 'اگر چیزی کار نکرد، «گزارش عیب‌یابی» را بزنید و متن گزارش را برای پشتیبانی بفرستید.', 'tamas-box' ); ?></li>
 					</ol>
 				</div>
@@ -1624,8 +1625,98 @@ class TMB_Chat_Admin {
 			$pull = TMB_Chat_Bale::pull_updates( 3 );
 			$L[]  = 'pull_updates (تست دستی): ' . (int) $pull . ' پیام پردازش شد';
 		} else {
-			$L[] = 'pull_updates: در حالت وب‌هوک اجرا نمی‌شود (بله اجازه getUpdates همزمان با وب‌هوک فعال را نمی‌دهد و خطای 409 می‌دهد) - پیام‌ها از همان وب‌هوک می‌آیند';
+			$L[] = 'pull_updates: در حالت وب‌هوک اجرا نمی‌شود (بله اجازه getUpdates همزمان با وب‌هوک فعال را نمی‌دهد و خطای 409 می‌دهد) - پیام‌ها از همان وب‌هوک می‌آیند.';
+			$L[] = '  اما دکمه «دریافت پیام‌های بله (دستی)» وب‌هوک را یک لحظه برمی‌دارد، صف را می‌خواند و وب‌هوک را برمی‌گرداند.';
 		}
+		$L[] = '';
+
+		/* ---- the inbound path: Bale -> site ---------------------------------- */
+		$L[] = '[مسیر برگشت: بله ← سایت]';
+
+		$totals = TMB_Chat_DB::totals();
+		$hits   = (int) TMB_Chat_DB::get_state( 'webhook_hits', 0 );
+		$werr   = (string) TMB_Chat_DB::get_state( 'webhook_error', '' );
+
+		/* The live getWebhookInfo above is newer than the cached state. */
+		$live_pending = ( isset( $info['result']['pending_update_count'] ) && ! is_wp_error( $info ) )
+			? (int) $info['result']['pending_update_count']
+			: null;
+
+		if ( null !== $live_pending ) {
+			$pended = $live_pending;
+		} else {
+			$pended = (int) TMB_Chat_DB::get_state( 'pending_updates', 0 );
+		}
+
+		if ( '' === $werr && isset( $info['result']['last_error_message'] ) && ! is_wp_error( $info ) ) {
+			$werr = (string) $info['result']['last_error_message'];
+		}
+
+		$L[] = '  درخواست‌های وب‌هوک (کل): ' . $hits . ( $hits ? '' : '  ← هیچ درخواستی به این آدرس نرسیده' );
+		$L[] = '  pending در بله: ' . $pended
+			. ( $pended > 0 ? '  ← بله هنوز ' . $pended . ' پیام را تحویل نداده؛ دکمه «دریافت پیام‌های بله (دستی)» آن‌ها را می‌خواند' : '' );
+		$L[] = '  آخرین خطای وب‌هوک: ' . ( '' !== $werr ? $werr : 'ندارد' );
+		$L[] = '  پیام‌ها: کل ' . (int) $totals['messages'] . ' | بازدیدکننده ' . (int) $totals['visitor']
+			. ' | مدیر ' . (int) $totals['agent'] . ' | گفتگو ' . (int) $totals['sessions'];
+
+		$agent_rows = TMB_Chat_DB::recent_messages( 'agent', 1 );
+
+		if ( ! empty( $agent_rows ) ) {
+			$row = $agent_rows[0];
+			$L[] = '  آخرین پیام مدیر در سایت: ' . wp_date( 'Y-m-d H:i:s', (int) $row['created_at'] )
+				. ' | گفتگو ' . (int) $row['session_id']
+				. ' | منبع ' . ( ! empty( $row['origin'] ) ? $row['origin'] : '-' )
+				. ' | «' . TMB_Chat_Bale::preview( $row['body'] ) . '»';
+		} else {
+			$L[] = '  آخرین پیام مدیر در سایت: هیچ ✖  ← پاسخ‌های بله هرگز در سایت ذخیره نشده‌اند';
+		}
+
+		$visitor_rows = TMB_Chat_DB::recent_messages( 'visitor', 1 );
+
+		if ( ! empty( $visitor_rows ) ) {
+			$row = $visitor_rows[0];
+			$L[] = '  آخرین پیام بازدیدکننده: ' . wp_date( 'Y-m-d H:i:s', (int) $row['created_at'] )
+				. ' | گفتگو ' . (int) $row['session_id']
+				. ' | «' . TMB_Chat_Bale::preview( $row['body'] ) . '»';
+		} else {
+			$L[] = '  آخرین پیام بازدیدکننده: هیچ';
+		}
+
+		$inbound = (array) TMB_Chat_DB::get_state( 'inbound_log', array() );
+
+		$L[] = '  رویدادهای ورودی اخیر (جدیدترین اول):';
+
+		if ( empty( $inbound ) ) {
+			$L[] = '    هیچ رویدادی ثبت نشده  ← یعنی هیچ پیامی از بله به این افزونه نرسیده';
+		} else {
+			foreach ( array_slice( $inbound, 0, 12 ) as $event ) {
+				$bits = array();
+
+				foreach ( (array) $event as $key => $value ) {
+					if ( 'time' === $key || 'action' === $key || '' === $value || is_array( $value ) ) {
+						continue;
+					}
+					$bits[] = $key . '=' . $value;
+				}
+
+				$L[] = '    ' . wp_date( 'm-d H:i:s', (int) $event['time'] ) . ' — ' . $event['action']
+					. ( $bits ? '  |  ' . implode( '  ', $bits ) : '' );
+			}
+		}
+
+		$raws = (array) TMB_Chat_DB::get_state( 'raw_inbox', array() );
+		$L[]  = '  آخرین بدنه‌های دریافتی از بله (خام، بریده):';
+
+		if ( empty( $raws ) ) {
+			$L[] = '    هیچ بدنه‌ای ثبت نشده';
+		} else {
+			foreach ( array_slice( $raws, 0, 3 ) as $index => $raw ) {
+				$L[] = '    ' . ( (int) $index + 1 ) . ') ' . wp_date( 'H:i:s', (int) $raw['time'] )
+					. ' | ' . $raw['source'] . ' | ' . (int) $raw['bytes'] . ' بایت';
+				$L[] = '       ' . trim( preg_replace( '/\s+/u', ' ', (string) $raw['body'] ) );
+			}
+		}
+
 		$L[] = '';
 		$L[] = '[خودآزمایی مرورگر]';
 
@@ -1705,6 +1796,55 @@ class TMB_Chat_Admin {
 		$this->guard();
 
 		TMB_Chat_DB::maybe_install();
+
+		$c = TMB_Chat::cfg();
+
+		/*
+		 * In webhook mode getUpdates answers 409, so the button used to do
+		 * nothing at all. It now drains the queue the safe way: the webhook is
+		 * removed for ~1 second, everything Bale still has is read, and the
+		 * webhook is put back.
+		 */
+		if ( 'webhook' === $c['bale_mode'] && TMB_Chat_Bale::has_token() ) {
+			$out = TMB_Chat_Bale::drain_updates( 100 );
+
+			if ( '' !== $out['error'] && ! $out['restored'] ) {
+				wp_send_json_error(
+					array(
+						'message' => sprintf(
+							/* translators: 1: stage, 2: error */
+							esc_html__( 'دریافت پیام‌ها ناتمام ماند (%1$s): %2$s', 'tamas-box' ),
+							$out['stage'],
+							$out['error']
+						),
+						'hint' => sprintf(
+							/* translators: %d: number of processed updates */
+							esc_html__( '%d پیام پیش از خطا پردازش شد. اگر خطا مربوط به setWebhook است، دوباره «ثبت وب‌هوک» را بزنید.', 'tamas-box' ),
+							(int) $out['processed']
+						),
+					)
+				);
+			}
+
+			$message = sprintf(
+				/* translators: 1: processed, 2: fetched */
+				esc_html__( '%1$d پیام از صف بله خوانده و پردازش شد (از %2$d پیام موجود).', 'tamas-box' ),
+				(int) $out['processed'],
+				(int) $out['fetched']
+			);
+
+			$hint = $out['restored']
+				? esc_html__( 'وب‌هوک دوباره ثبت شد؛ مسیر عادی برقرار است.', 'tamas-box' )
+				: esc_html__( 'وب‌هوک دوباره ثبت نشد؛ «ثبت وب‌هوک» را بزنید.', 'tamas-box' );
+
+			wp_send_json_success(
+				array(
+					'message' => $message,
+					'hint'    => $hint,
+					'count'   => (int) $out['processed'],
+				)
+			);
+		}
 
 		$count = TMB_Chat_Bale::pull_updates( 5 );
 
