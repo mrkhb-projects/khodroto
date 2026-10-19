@@ -9,8 +9,37 @@
  */
 
 .tmbc-root,
-.tmbc-root * {
+.tmbc-root *,
+.tmbc-root *::before,
+.tmbc-root *::after {
 	box-sizing: border-box;
+}
+
+/*
+ * Themes love to style bare buttons and inputs with big paddings, giant
+ * min-heights and full widths. These resets keep the widget geometry ours.
+ */
+.tmbc-root button,
+.tmbc-root input,
+.tmbc-root textarea {
+	margin: 0;
+	float: none;
+	font-family: inherit;
+	letter-spacing: normal;
+	text-transform: none;
+	text-indent: 0;
+	text-shadow: none;
+	box-shadow: none;
+	max-width: 100%;
+	-webkit-appearance: none;
+	appearance: none;
+}
+
+.tmbc-root button {
+	min-width: 0;
+	min-height: 0;
+	line-height: 1.2;
+	text-align: center;
 }
 
 .tmbc-root {
@@ -43,8 +72,24 @@
 
 .tmbc-root[dir="rtl"] { text-align: right; }
 
-.tmbc-root svg { display: block; }
+/*
+ * Every inline <svg> here has a viewBox but no width/height attribute. Left
+ * alone the browser falls back to the 300x150 default box and the icon spills
+ * out of its 32px button - which is what "the close button is huge" was.
+ */
+.tmbc-root svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
+	flex: 0 1 auto;
+}
 .tmbc-root .tmb-ico { width: 100%; height: 100%; }
+.tmbc-icon-btn svg { width: 18px; height: 18px; }
+.tmbc-send svg { width: 22px; height: 22px; }
+.tmbc-launcher-ico svg,
+.tmbc-launcher-x svg { width: 100%; height: 100%; }
 
 /* ============================================================
    LAUNCHER BUTTON
@@ -206,6 +251,7 @@
 	height: var(--tmbc-h);
 	max-width: calc(100vw - 24px);
 	max-height: calc(100vh - 24px);
+	max-height: calc(100dvh - 24px);
 
 	display: flex;
 	flex-direction: column;
@@ -288,7 +334,7 @@
 	background: rgba(255, 255, 255, .18);
 }
 
-.tmbc-head-texts { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.tmbc-head-texts { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 .tmbc-title { font-size: 15px; font-weight: 700; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .tmbc-status {
@@ -299,7 +345,12 @@
 	line-height: 1.6;
 	opacity: .92;
 }
-.tmbc-status[data-tmbc-status-text] { min-width: 0; }
+.tmbc-status { min-width: 0; max-width: 100%; }
+.tmbc-status > span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 
 .tmbc-dot {
 	width: 8px;
@@ -669,6 +720,10 @@
 /* closed state: hide the composer, show the restart hint */
 .tmbc-root.is-closed .tmbc-composer { display: none; }
 
+/* before the visitor introduces themselves the composer is unusable -
+   hiding it keeps the small screen clean and the form reachable */
+.tmbc-prechat:not([hidden]) ~ .tmbc-composer { display: none; }
+
 /* ============================================================
    SHORTCODE BUTTON  [tamas_chat]
    ============================================================ */
@@ -692,9 +747,29 @@
 .tmbc-shortcode .tmbc-sc-ico { width: 20px; height: 20px; flex: 0 0 20px; }
 
 /* ============================================================
-   MOBILE - bottom sheet
+   PHONE  (<= 768px) - a floating card, not a broken bottom sheet
    ============================================================ */
 @media (max-width: 768px) {
+	/*
+	 * The page behind must not scroll or zoom while the chat is open:
+	 * chat.js adds .tmbc-lock to <html>.
+	 */
+	html.tmbc-lock,
+	html.tmbc-lock body {
+		overflow: hidden !important;
+		height: 100% !important;
+		overscroll-behavior: none !important;
+	}
+
+	.tmbc-overlay {
+		background: rgba(15, 23, 42, .42);
+		-webkit-backdrop-filter: blur(3px);
+		backdrop-filter: blur(3px);
+	}
+
+	/* the launcher keeps floating while closed; the panel closes itself */
+	.tmbc-root.is-open .tmbc-launcher { display: none !important; }
+
 	.tmbc-panel,
 	.tmbc-pos-bottom-right .tmbc-panel,
 	.tmbc-pos-bottom-left .tmbc-panel,
@@ -703,29 +778,109 @@
 	.tmbc-pos-top-left .tmbc-panel,
 	.tmbc-pos-top-center .tmbc-panel,
 	.tmbc-pos-middle-right .tmbc-panel,
-	.tmbc-pos-middle-left .tmbc-panel {
-		top: auto;
-		bottom: 0;
-		left: 0;
-		right: 0;
-		width: auto;
-		max-width: none;
-		height: min(var(--tmbc-h), 88vh);
-		max-height: 88vh;
-		border-radius: var(--tmbc-radius) var(--tmbc-radius) 0 0;
-		transform: translateY(100%);
+	.tmbc-pos-middle-left .tmbc-panel,
+	.tmbc-root[data-tmbc="panel"] .tmbc-panel,
+	.tmbc-root[class*="tmbc-pos-"] .tmbc-panel {
+		top: max(8px, env(safe-area-inset-top)) !important;
+		right: max(8px, env(safe-area-inset-right)) !important;
+		bottom: max(8px, env(safe-area-inset-bottom)) !important;
+		left: max(8px, env(safe-area-inset-left)) !important;
+		width: auto !important;
+		height: auto !important;
+		max-width: none !important;
+		max-height: none !important;
+		border-radius: 16px !important;
+		transform: translateY(14px) scale(.985);
 	}
 
 	.tmbc-root.is-open .tmbc-panel,
-	.tmbc-root.is-open.tmbc-pos-middle-right .tmbc-panel,
-	.tmbc-root.is-open.tmbc-pos-middle-left .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-bottom-right .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-bottom-left .tmbc-panel,
 	.tmbc-root.is-open.tmbc-pos-bottom-center .tmbc-panel,
-	.tmbc-root.is-open.tmbc-pos-top-center .tmbc-panel {
-		transform: translateY(0);
+	.tmbc-root.is-open.tmbc-pos-top-right .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-top-left .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-top-center .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-middle-right .tmbc-panel,
+	.tmbc-root.is-open.tmbc-pos-middle-left .tmbc-panel {
+		transform: none !important;
 	}
 
-	.tmbc-msg { max-width: 92%; }
+	/* ---- header: compact, 56px ---- */
+	.tmbc-head {
+		position: relative;
+		min-height: 56px;
+		padding: 8px 10px;
+		gap: 8px;
+	}
+	.tmbc-avatar {
+		width: 34px;
+		height: 34px;
+		flex: 0 0 34px;
+		padding: 7px;
+	}
+	.tmbc-title { font-size: 14px; line-height: 1.4; }
+	.tmbc-status { font-size: 11px; line-height: 1.5; gap: 4px; }
+	.tmbc-dot { width: 7px; height: 7px; flex-basis: 7px; }
+	.tmbc-head-actions { gap: 2px; }
+	.tmbc-icon-btn {
+		width: 36px;
+		height: 36px;
+		padding: 8px;
+	}
+	.tmbc-icon-btn svg { width: 20px; height: 20px; }
 
+	/* ---- messages ---- */
+	.tmbc-body { padding: 10px; gap: 6px; }
+	.tmbc-msg { max-width: 88%; }
+	.tmbc-bubble {
+		font-size: 13.5px;
+		line-height: 1.8;
+		padding: 7px 11px;
+		border-radius: 13px;
+	}
+	.tmbc-meta { font-size: 10px; }
+	.tmbc-empty { padding: 12px 8px; }
+	.tmbc-day { font-size: 10.5px; }
+
+	/* ---- pre-chat form ---- */
+	.tmbc-prechat { padding: 12px; gap: 8px; }
+	.tmbc-prechat-title { font-size: 12.5px; }
+	.tmbc-field { font-size: 11.5px; gap: 3px; }
+	.tmbc-field input {
+		height: 42px;
+		padding: 0 12px;
+		font-size: 16px; /* < 16px makes iOS zoom into the field */
+		border-radius: 10px;
+	}
+	.tmbc-prechat-actions { gap: 6px; }
+	.tmbc-btn-primary,
+	.tmbc-btn-ghost {
+		height: 42px;
+		padding: 0 12px;
+		font-size: 13.5px;
+		border-radius: 10px;
+	}
+
+	/* ---- composer ---- */
+	.tmbc-composer { padding: 8px; gap: 6px; }
+	.tmbc-composer textarea {
+		min-height: 40px;
+		max-height: 96px;
+		padding: 9px 11px;
+		font-size: 16px; /* same iOS rule */
+		line-height: 1.5;
+		border-radius: 12px;
+	}
+	.tmbc-send {
+		width: 40px;
+		height: 40px;
+		padding: 9px;
+		border-radius: 12px;
+	}
+	.tmbc-send svg { width: 22px; height: 22px; }
+	.tmbc-foot { padding: 4px 8px; font-size: 10px; }
+
+	/* ---- launcher ---- */
 	.tmbc-launcher {
 		bottom: var(--tmbc-y-mobile) !important;
 		top: auto !important;
@@ -738,26 +893,25 @@
 	.tmbc-pos-top-right .tmbc-launcher,
 	.tmbc-pos-top-left .tmbc-launcher,
 	.tmbc-pos-top-center .tmbc-launcher { transform: none !important; }
-
-	/* a grabber so it feels like a sheet */
-	.tmbc-head::before {
-		content: "";
-		position: absolute;
-		top: 6px;
-		left: 50%;
-		width: 42px;
-		height: 4px;
-		border-radius: 2px;
-		background: rgba(255, 255, 255, .45);
-		transform: translateX(-50%);
-	}
-	.tmbc-head { position: relative; padding-top: 16px; }
 }
 
 /* very small screens */
 @media (max-width: 380px) {
 	.tmbc-launcher-text { display: none; }
 	.tmbc-launcher { padding: 0; min-width: 54px; height: 54px; }
+	.tmbc-body { padding: 8px; }
+	.tmbc-prechat,
+	.tmbc-composer { padding: 10px 8px; }
+	.tmbc-title { font-size: 13px; }
+}
+
+/* tablet: a roomier card, still next to the corner */
+@media (min-width: 769px) and (max-width: 1024px) {
+	.tmbc-panel {
+		width: min(420px, calc(100vw - 40px));
+		height: min(640px, calc(100vh - 40px));
+		height: min(640px, calc(100dvh - 40px));
+	}
 }
 
 /* reduced motion */

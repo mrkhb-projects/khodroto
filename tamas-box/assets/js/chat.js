@@ -824,6 +824,24 @@ function tmbChatBoot( RAW ) {
 	 * open / close
 	 * ---------------------------------------------------------------- */
 
+	/*
+	 * On phones the panel covers the screen, so the page behind must not
+	 * scroll or rubber-band while it is open.
+	 */
+	function lockScroll( on ) {
+		var html = document.documentElement;
+
+		if ( ! html ) {
+			return;
+		}
+
+		if ( on && window.matchMedia && window.matchMedia( '(max-width: 768px)' ).matches ) {
+			html.classList.add( 'tmbc-lock' );
+		} else {
+			html.classList.remove( 'tmbc-lock' );
+		}
+	}
+
 	function open( focus ) {
 		if ( state.open ) {
 			return;
@@ -832,6 +850,7 @@ function tmbChatBoot( RAW ) {
 		state.open = true;
 
 		root.classList.add( 'is-open' );
+		lockScroll( true );
 
 		if ( el.panel ) {
 			el.panel.hidden = false;
@@ -869,6 +888,7 @@ function tmbChatBoot( RAW ) {
 		state.open = false;
 
 		root.classList.remove( 'is-open' );
+		lockScroll( false );
 
 		if ( el.overlay ) {
 			el.overlay.hidden = true;

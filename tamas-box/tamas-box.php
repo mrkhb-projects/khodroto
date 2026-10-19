@@ -3,7 +3,7 @@
  * Plugin Name:       تماس باکس | Tamas Box
  * Plugin URI:        https://www.mrkhodabakhshi.ir
  * Description:       افزونه دکمه شناور تماس و باکس راه‌های ارتباطی، به‌همراه چت آنلاین سایت که پیام‌های مشتری را به بازوی بله می‌برد و پاسخ مدیران را در همان چت‌باکس نمایش می‌دهد. در دسکتاپ از سمت راست باز می‌شود و در موبایل به صورت منوی کشویی از پایین. کاملاً قابل شخصی‌سازی (رنگ‌بندی، آیتم‌ها، آیکون‌ها، تماس مستقیم tel:) با کنترل کامل نمایش در صفحات دلخواه.
- * Version:           3.2.7
+ * Version:           3.2.8
  * Author:            محمدرضا خدابخشی
  * Author URI:        https://www.mrkhodabakhshi.ir
  * License:           GPL-2.0-or-later
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TMB_VERSION', '3.2.7' );
+define( 'TMB_VERSION', '3.2.8' );
 define( 'TMB_FILE', __FILE__ );
 define( 'TMB_PATH', plugin_dir_path( __FILE__ ) );
 define( 'TMB_URL', plugin_dir_url( __FILE__ ) );
